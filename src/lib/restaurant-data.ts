@@ -53,10 +53,14 @@ export const ORDER_STATUS_CONFIG: Record<OrderStatus, { label: string; color: st
   cancelled:        { label: 'Cancelled',        color: 'red' },
 };
 
+export type StoreBranch = 'Kariyad' | 'Pallikkuni';
+export const STORE_BRANCHES: StoreBranch[] = ['Kariyad', 'Pallikkuni'];
+
 export interface Enquiry {
   id: string;
   orderId?: string;
   status?: OrderStatus;
+  branch?: StoreBranch | string;
   customerName: string;
   customerPhone: string;
   deliveryAddress?: string;
@@ -83,6 +87,7 @@ export function generateOrderId(): string {
 // Format structured WhatsApp order message for Easy Mart Supermarket
 export function formatWhatsAppOrderMessage(params: {
   orderId: string;
+  branch?: string;
   customerName: string;
   customerPhone: string;
   deliveryAddress: string;
@@ -93,13 +98,16 @@ export function formatWhatsAppOrderMessage(params: {
   finalTotal: number;
 }): string {
   const {
-    orderId, customerName, customerPhone,
+    orderId, branch, customerName, customerPhone,
     deliveryAddress, deliveryLandmark, deliveryNotes,
     cartItems, subtotal, finalTotal,
   } = params;
 
   let msg = `🛒 *NEW GROCERY ORDER — Easy Mart Supermarket*\n`;
   msg += `📍 *Order ID:* #${orderId}\n`;
+  if (branch) {
+    msg += `🏢 *Branch:* ${branch}\n`;
+  }
   msg += `--------------------------------\n`;
   msg += `👤 *Customer Name:* ${customerName}\n`;
   msg += `📞 *Customer Phone:* ${customerPhone}\n`;
@@ -117,7 +125,7 @@ export function formatWhatsAppOrderMessage(params: {
   msg += `💵 Subtotal: ₹${subtotal.toFixed(2)}\n`;
   msg += `💰 *TOTAL AMOUNT: ₹${finalTotal.toFixed(2)}*\n`;
   msg += `--------------------------------\n`;
-  msg += `📍 Store: Easy Mart Supermarket, Pallikkuni\n`;
+  msg += `📍 Store: Easy Mart Supermarket (${branch || 'Pallikkuni'})\n`;
   msg += `Please confirm my grocery delivery. Thank you!`;
 
   return msg;

@@ -17,6 +17,7 @@ export async function submitOrderAction(order: Enquiry): Promise<{ success: bool
       id: order.id || `enq-${Date.now()}`,
       order_id: order.orderId,
       status: order.status || 'pending',
+      branch: order.branch || null,
       customer_name: order.customerName,
       customer_phone: order.customerPhone,
       delivery_address: order.deliveryAddress || null,

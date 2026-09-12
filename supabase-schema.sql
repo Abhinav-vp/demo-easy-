@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS public.enquiries (
     id TEXT PRIMARY KEY,
     order_id TEXT UNIQUE,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled')),
+    branch TEXT,
     customer_name TEXT NOT NULL,
     customer_phone TEXT NOT NULL,
     delivery_address TEXT,
@@ -27,13 +28,15 @@ CREATE TABLE IF NOT EXISTS public.enquiries (
     delivery_notes TEXT,
     items TEXT NOT NULL,
     item_details JSONB,
-    coupon_code TEXT,
-    coupon_discount NUMERIC(10, 2),
     subtotal_price NUMERIC(10, 2),
     total_quantity INTEGER DEFAULT 1,
     total_price NUMERIC(10, 2) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+-- Migration for existing databases:
+ALTER TABLE public.enquiries ADD COLUMN IF NOT EXISTS branch TEXT;
+
 
 -- 3. OFFERS TABLE
 CREATE TABLE IF NOT EXISTS public.offers (

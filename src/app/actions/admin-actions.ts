@@ -176,6 +176,7 @@ export async function fetchEnquiriesAction(): Promise<{ success: boolean; data: 
       id: row.id,
       orderId: row.order_id,
       status: row.status as OrderStatus,
+      branch: row.branch || undefined,
       customerName: row.customer_name,
       customerPhone: row.customer_phone,
       deliveryAddress: row.delivery_address || undefined,

@@ -15,6 +15,8 @@ export default function MenuPage() {
   const [prodLoading, setProdLoading] = useState(true);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [selectedBranch, setSelectedBranch] = useState<string>("");
+  const [branchTouched, setBranchTouched] = useState<boolean>(false);
   const [isOrdering, setIsOrdering] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -107,6 +109,12 @@ export default function MenuPage() {
     e.preventDefault();
     if (cart.length === 0) return;
 
+    if (!selectedBranch) {
+      setBranchTouched(true);
+      setOrderError("Please select a branch (Kariyad or Pallikkuni) to proceed.");
+      return;
+    }
+
     const phoneVal = validatePhone(customerPhone);
     if (!phoneVal.isValid) {
       setPhoneTouched(true);
@@ -139,6 +147,7 @@ export default function MenuPage() {
         id: `enq-${orderId}`,
         orderId,
         status: 'pending' as const,
+        branch: selectedBranch,
         customerName,
         customerPhone,
         deliveryAddress: deliveryAddress.trim(),
@@ -164,6 +173,7 @@ export default function MenuPage() {
         const whatsappNumber = "918113021038";
         const formattedMessage = formatWhatsAppOrderMessage({
           orderId,
+          branch: selectedBranch,
           customerName,
           customerPhone,
           deliveryAddress: deliveryAddress.trim(),
@@ -180,6 +190,8 @@ export default function MenuPage() {
       }
 
       setCart([]);
+      setSelectedBranch("");
+      setBranchTouched(false);
       setCustomerPhone("");
       setCustomerName("");
       setDeliveryAddress("");
@@ -424,6 +436,51 @@ export default function MenuPage() {
             )}
 
             <form onSubmit={placeOrder} className="space-y-4 text-left">
+              {/* Branch Selection Field */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                  Select Branch *
+                </label>
+                <div className="relative">
+                  <select
+                    required
+                    value={selectedBranch}
+                    onChange={(e) => {
+                      setSelectedBranch(e.target.value);
+                      if (!branchTouched) setBranchTouched(true);
+                    }}
+                    onBlur={() => setBranchTouched(true)}
+                    className={`w-full px-4 py-3 text-sm bg-slate-900/80 border rounded-xl text-white appearance-none cursor-pointer focus:outline-none transition-smooth ${
+                      branchTouched && !selectedBranch
+                        ? "border-red-500 focus:ring-red-500/50"
+                        : branchTouched && selectedBranch
+                        ? "border-green-500 focus:ring-green-500/50"
+                        : "border-slate-800 focus:border-amber-500"
+                    }`}
+                  >
+                    <option value="" disabled className="bg-slate-900 text-slate-500">
+                      Select your branch
+                    </option>
+                    <option value="Kariyad" className="bg-slate-900 text-white">
+                      Kariyad
+                    </option>
+                    <option value="Pallikkuni" className="bg-slate-900 text-white">
+                      Pallikkuni
+                    </option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+                {branchTouched && !selectedBranch && (
+                  <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
+                    <Warning className="w-3.5 h-3.5" /> Please select a branch to proceed
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Your Full Name</label>
                 <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} required placeholder="Enter your full name" className="px-4 py-3 text-sm" />
@@ -516,7 +573,7 @@ export default function MenuPage() {
 
               <button 
                 type="submit" 
-                disabled={isOrdering || cart.length === 0 || (phoneTouched && !validatePhone(customerPhone).isValid) || (addressTouched && !validateAddress(deliveryAddress).isValid)} 
+                disabled={isOrdering || cart.length === 0 || (branchTouched && !selectedBranch) || (phoneTouched && !validatePhone(customerPhone).isValid) || (addressTouched && !validateAddress(deliveryAddress).isValid)} 
                 className="w-full py-4 rounded-xl bg-gradient-to-tr from-amber-600 to-amber-500 text-slate-950 font-bold text-sm hover:from-amber-500 hover:to-amber-400 transition-smooth shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isOrdering ? (

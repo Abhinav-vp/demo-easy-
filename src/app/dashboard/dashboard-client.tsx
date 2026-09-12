@@ -25,7 +25,7 @@ import {
   deleteOfferAction,
   toggleOfferActiveAction,
 } from "@/app/actions/admin-actions";
-import { ForkKnife, NewspaperClipping, Tag, Upload, CheckCircle, PencilSimple, Trash, MagnifyingGlass, PlayCircle, PauseCircle, Phone, HouseLine, CircleNotch, X, SignOut, CloudCheck, WarningCircle, BellRinging, SpeakerHigh, SpeakerSlash } from "@phosphor-icons/react";
+import { ForkKnife, NewspaperClipping, Tag, Upload, CheckCircle, PencilSimple, Trash, MagnifyingGlass, PlayCircle, PauseCircle, Phone, HouseLine, CircleNotch, X, SignOut, CloudCheck, WarningCircle, BellRinging, SpeakerHigh, SpeakerSlash, Storefront, Printer } from "@phosphor-icons/react";
 
 type AdminMenuItem = MenuItem & { id: string };
 
@@ -49,6 +49,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
   // Enquiries State
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'all'>('all');
+  const [branchFilter, setBranchFilter] = useState<'all' | 'Kariyad' | 'Pallikkuni'>('all');
 
   // Offers State
   const [offers, setOffers] = useState<Offer[]>([]);
@@ -209,6 +210,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       id: row.id || `enq-${Date.now()}`,
       orderId: row.order_id || row.orderId || `ORD-${Date.now()}`,
       status: (row.status as OrderStatus) || 'pending',
+      branch: row.branch || row.branch_name || undefined,
       customerName: row.customer_name || row.customerName || 'Customer',
       customerPhone: row.customer_phone || row.customerPhone || '',
       deliveryAddress: row.delivery_address || row.deliveryAddress || undefined,
@@ -506,9 +508,145 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     }
   };
 
-  const filteredEnquiries = statusFilter === 'all'
-    ? enquiries
-    : enquiries.filter(e => (e.status || 'pending') === statusFilter);
+  const filteredEnquiries = enquiries.filter(e => {
+    const matchesStatus = statusFilter === 'all' || (e.status || 'pending') === statusFilter;
+    const matchesBranch = branchFilter === 'all' || (e.branch || 'Pallikkuni') === branchFilter;
+    return matchesStatus && matchesBranch;
+  });
+
+  const handlePrintOrder = (enq: Enquiry) => {
+    const printWindow = window.open('', '_blank', 'width=420,height=650');
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    const branchName = enq.branch || 'Pallikkuni';
+    const orderNum = enq.orderId ? `#${enq.orderId}` : `#${enq.id}`;
+
+    let itemsBlock = '';
+    if (enq.itemDetails && enq.itemDetails.length > 0) {
+      itemsBlock = enq.itemDetails
+        .map(
+          (i) => `
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; font-size:12px;">
+            <span style="flex:1; padding-right:8px;">${i.quantity}x ${i.name}</span>
+            <span style="font-weight:600;">₹${(i.unitPrice * i.quantity).toFixed(2)}</span>
+          </div>`
+        )
+        .join('');
+    } else {
+      itemsBlock = `<div style="font-size:12px; margin-bottom:4px; line-height:1.4;">${enq.items}</div>`;
+    }
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Supermarket Order ${orderNum}</title>
+          <style>
+            @media print {
+              @page { margin: 5mm; size: auto; }
+              body { margin: 0; padding: 0; }
+            }
+            body {
+              font-family: 'Courier New', Courier, monospace, -apple-system, sans-serif;
+              color: #000;
+              background: #fff;
+              width: 100%;
+              max-width: 320px;
+              margin: 0 auto;
+              padding: 12px 8px;
+              box-sizing: border-box;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 2px dashed #000;
+              padding-bottom: 8px;
+              margin-bottom: 8px;
+            }
+            .header h2 {
+              margin: 0 0 4px 0;
+              font-size: 16px;
+              letter-spacing: 1px;
+            }
+            .row {
+              display: flex;
+              justify-content: space-between;
+              font-size: 12px;
+              margin-bottom: 3px;
+            }
+            .branch-badge {
+              font-weight: bold;
+              font-size: 13px;
+              border: 1px solid #000;
+              padding: 1px 6px;
+              display: inline-block;
+            }
+            .divider {
+              border-top: 1px dashed #000;
+              margin: 8px 0;
+            }
+            .section-title {
+              font-size: 12px;
+              font-weight: bold;
+              margin-bottom: 4px;
+              text-transform: uppercase;
+            }
+            .total-row {
+              display: flex;
+              justify-content: space-between;
+              font-size: 14px;
+              font-weight: bold;
+              margin-top: 4px;
+            }
+            .footer {
+              text-align: center;
+              font-size: 11px;
+              margin-top: 12px;
+              border-top: 1px dashed #000;
+              padding-top: 6px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2>SUPERMARKET ORDER</h2>
+            <div style="font-size:11px;">EASY MART SUPERMARKET</div>
+          </div>
+          <div class="row"><strong>Order:</strong> <span>${orderNum}</span></div>
+          <div class="row" style="align-items:center;">
+            <strong>Branch:</strong> <span class="branch-badge">${branchName}</span>
+          </div>
+          <div class="divider"></div>
+          <div class="row"><strong>Customer:</strong> <span>${enq.customerName}</span></div>
+          <div class="row"><strong>Phone:</strong> <span>${enq.customerPhone}</span></div>
+          ${enq.deliveryAddress ? `<div class="row"><strong>Delivery:</strong> <span>${enq.deliveryAddress}</span></div>` : ''}
+          ${enq.deliveryLandmark ? `<div class="row"><strong>Landmark:</strong> <span>${enq.deliveryLandmark}</span></div>` : ''}
+          <div class="divider"></div>
+          <div class="section-title">Items:</div>
+          ${itemsBlock}
+          <div class="divider"></div>
+          <div class="row"><span>Total Qty:</span> <span>${enq.totalQuantity}</span></div>
+          ${enq.subtotalPrice ? `<div class="row"><span>Subtotal:</span> <span>₹${enq.subtotalPrice.toFixed(2)}</span></div>` : ''}
+          <div class="total-row"><span>Total:</span> <span>₹${enq.totalPrice.toFixed(2)}</span></div>
+          <div class="footer">
+            <div>Date: ${new Date(enq.createdAt).toLocaleString()}</div>
+            <div style="margin-top:4px;">Thank you for your order!</div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 250);
+  };
 
   // Offer management
   const resetOfferForm = () => {
@@ -947,37 +1085,67 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
               )}
             </div>
 
-            {/* Status Filter Bar */}
+            {/* Filter Controls: Branch and Status */}
             {enquiries.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-5">
-                <button
-                  onClick={() => setStatusFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-smooth border ${
-                    statusFilter === 'all'
-                      ? 'bg-white/10 border-white/20 text-white'
-                      : 'glass border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  All ({enquiries.length})
-                </button>
-                {(Object.keys(ORDER_STATUS_CONFIG) as OrderStatus[]).map(status => {
-                  const config = ORDER_STATUS_CONFIG[status];
-                  const count = enquiries.filter(e => (e.status || 'pending') === status).length;
-                  if (count === 0) return null;
-                  return (
-                    <button
-                      key={status}
-                      onClick={() => setStatusFilter(status)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-smooth border ${
-                        statusFilter === status
-                          ? `bg-${config.color}-500/20 border-${config.color}-500/40 text-${config.color}-400`
-                          : 'glass border-slate-800 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {config.label} ({count})
-                    </button>
-                  );
-                })}
+              <div className="space-y-3 mb-5">
+                {/* Branch Filter Tabs */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-400 font-bold mr-1 flex items-center gap-1">
+                    <Storefront className="w-3.5 h-3.5 text-amber-500" /> Branch:
+                  </span>
+                  {(['all', 'Kariyad', 'Pallikkuni'] as const).map(b => {
+                    const count = b === 'all'
+                      ? enquiries.length
+                      : enquiries.filter(e => (e.branch || 'Pallikkuni') === b).length;
+                    return (
+                      <button
+                        key={b}
+                        onClick={() => setBranchFilter(b)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-smooth border ${
+                          branchFilter === b
+                            ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
+                            : 'glass border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {b === 'all' ? `All Branches (${count})` : `${b} (${count})`}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Status Filter Bar */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-400 font-bold mr-1">Status:</span>
+                  <button
+                    onClick={() => setStatusFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-smooth border ${
+                      statusFilter === 'all'
+                        ? 'bg-white/10 border-white/20 text-white'
+                        : 'glass border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    All ({branchFilter === 'all' ? enquiries.length : enquiries.filter(e => (e.branch || 'Pallikkuni') === branchFilter).length})
+                  </button>
+                  {(Object.keys(ORDER_STATUS_CONFIG) as OrderStatus[]).map(status => {
+                    const config = ORDER_STATUS_CONFIG[status];
+                    const pool = branchFilter === 'all' ? enquiries : enquiries.filter(e => (e.branch || 'Pallikkuni') === branchFilter);
+                    const count = pool.filter(e => (e.status || 'pending') === status).length;
+                    if (count === 0) return null;
+                    return (
+                      <button
+                        key={status}
+                        onClick={() => setStatusFilter(status)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-smooth border ${
+                          statusFilter === status
+                            ? `bg-${config.color}-500/20 border-${config.color}-500/40 text-${config.color}-400`
+                            : 'glass border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {config.label} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -990,8 +1158,13 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
             ) : filteredEnquiries.length === 0 ? (
               <div className="text-center py-12 text-slate-500 glass rounded-2xl flex flex-col items-center">
                 <MagnifyingGlass className="w-8 h-8 mb-2 text-slate-700" />
-                <p className="text-sm font-semibold">No orders with this status</p>
-                <button onClick={() => setStatusFilter('all')} className="text-xs text-amber-400 hover:underline mt-2">Show all orders</button>
+                <p className="text-sm font-semibold">No orders matching the selected filters</p>
+                <button
+                  onClick={() => { setStatusFilter('all'); setBranchFilter('all'); }}
+                  className="text-xs text-amber-400 hover:underline mt-2"
+                >
+                  Show all orders
+                </button>
               </div>
             ) : (
               <div className="space-y-3">
@@ -1014,7 +1187,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
                     <div key={enq.id} className="glass rounded-2xl p-5 border border-slate-800 hover:border-slate-700/60 transition-smooth">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
-                          {/* Header Row: Order ID, Name, Phone, Status Badge */}
+                          {/* Header Row: Order ID, Name, Phone, Branch Badge, Status Badge */}
                           <div className="flex items-center gap-3 mb-3 flex-wrap">
                             {enq.orderId && (
                               <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono font-bold text-xs border border-amber-500/30">
@@ -1024,6 +1197,12 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
                             <span className="font-extrabold text-white">{enq.customerName}</span>
                             <a href={`tel:${enq.customerPhone}`} className="text-xs text-amber-400 font-bold hover:underline flex items-center gap-1"><Phone className="w-3.5 h-3.5" weight="fill" /> {enq.customerPhone}</a>
                             
+                            {/* Branch Badge */}
+                            <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 font-bold text-xs border border-emerald-500/30 flex items-center gap-1">
+                              <Storefront className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Branch: {enq.branch || 'Pallikkuni'}</span>
+                            </span>
+
                             {/* Status Badge */}
                             <span
                               className="px-2.5 py-1 rounded-full font-bold text-[10px] uppercase tracking-wider border ml-auto"
@@ -1055,8 +1234,16 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
                             <span className="font-bold text-amber-400/80">₹{enq.totalPrice.toFixed(2)}</span>
                             <span>{new Date(enq.createdAt).toLocaleString()}</span>
 
-                            {/* Status Dropdown */}
+                            {/* Actions: Print & Status Dropdown */}
                             <div className="ml-auto flex items-center gap-2">
+                              <button
+                                onClick={() => handlePrintOrder(enq)}
+                                title="Print Order Receipt"
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 border border-slate-700 hover:border-amber-400 transition-smooth flex items-center gap-1.5 shadow-sm cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Print</span>
+                              </button>
                               <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Status:</label>
                               <select
                                 value={currentStatus}
@@ -1387,7 +1574,14 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">New Order Received!</span>
                 <span className="text-[10px] text-slate-500 font-mono">Just now</span>
               </div>
-              <p className="text-sm font-bold text-white truncate mt-0.5">{latestOrderNotification.orderId || 'Order'}</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-sm font-bold text-white truncate">{latestOrderNotification.orderId || 'Order'}</p>
+                {latestOrderNotification.branch && (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                    {latestOrderNotification.branch}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-300 mt-0.5 truncate">
                 {latestOrderNotification.customerName} • <span className="text-amber-400 font-semibold">₹{latestOrderNotification.totalPrice.toFixed(2)}</span>
               </p>
