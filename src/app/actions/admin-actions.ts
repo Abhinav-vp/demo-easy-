@@ -44,7 +44,7 @@ export async function fetchMenuItemsAction(): Promise<{ success: boolean; data: 
       price: Number(row.price),
       originalPrice: row.original_price ? Number(row.original_price) : undefined,
       description: row.description || '',
-      image: row.image || undefined,
+      image: row.image || row.image_url || undefined,
       branch: row.branch || undefined,
     }));
 
@@ -146,7 +146,9 @@ export async function bulkUpsertMenuItemsAction(
       original_price: item.originalPrice ?? null,
       description: item.description || '',
       image: item.image || null,
+      image_url: item.image || null,
       branch: item.branch || null,
+      is_available: true,
     }));
 
     const { error } = await supabase
@@ -470,4 +472,89 @@ export async function toggleOfferActiveAction(id: string, active: boolean): Prom
   }
 }
 
+// ==========================================
+// BRANCHES & CATEGORIES ACTIONS
+// ==========================================
 
+export async function fetchBranchesAction(): Promise<{
+  success: boolean;
+  data: { id: string; name: string; location?: string; phone?: string; isActive: boolean }[];
+  error?: string;
+}> {
+  const fallback = [
+    { id: 'br_kariyad', name: 'Kariyad', location: 'Kariyad, Thalassery Road, Kerala', phone: '8113021038', isActive: true },
+    { id: 'br_pallikkuni', name: 'Pallikkuni', location: 'Pallikkuni, Peringathur, Kerala', phone: '8113021038', isActive: true },
+  ];
+
+  try {
+    if (!isSupabaseServerConfigured()) {
+      return { success: true, data: fallback };
+    }
+
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from('branches')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (error || !data || data.length === 0) {
+      return { success: true, data: fallback };
+    }
+
+    return {
+      success: true,
+      data: data.map((b: any) => ({
+        id: b.id,
+        name: b.name,
+        location: b.location || undefined,
+        phone: b.phone || undefined,
+        isActive: b.is_active ?? true,
+      })),
+    };
+  } catch {
+    return { success: true, data: fallback };
+  }
+}
+
+export async function fetchCategoriesAction(): Promise<{
+  success: boolean;
+  data: { id: string; name: string; slug: string; imageUrl?: string; isActive: boolean }[];
+  error?: string;
+}> {
+  const fallback = [
+    { id: 'cat_fv', name: 'Fresh Fruits & Vegetables', slug: 'fruits-vegetables', imageUrl: '/fresh_produce.jpg', isActive: true },
+    { id: 'cat_db', name: 'Dairy & Bakery', slug: 'dairy-bakery', imageUrl: '/easy_mart_hero.jpg', isActive: true },
+    { id: 'cat_gs', name: 'Groceries & Daily Staples', slug: 'groceries-staples', imageUrl: '/grocery_staples.jpg', isActive: true },
+    { id: 'cat_sb', name: 'Snacks & Beverages', slug: 'snacks-beverages', isActive: true },
+    { id: 'cat_he', name: 'Household Essentials', slug: 'household-essentials', isActive: true },
+  ];
+
+  try {
+    if (!isSupabaseServerConfigured()) {
+      return { success: true, data: fallback };
+    }
+
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from('categories')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (error || !data || data.length === 0) {
+      return { success: true, data: fallback };
+    }
+
+    return {
+      success: true,
+      data: data.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        imageUrl: c.image_url || undefined,
+        isActive: c.is_active ?? true,
+      })),
+    };
+  } catch {
+    return { success: true, data: fallback };
+  }
+}

@@ -37,6 +37,21 @@ export async function submitOrderAction(order: Enquiry): Promise<{ success: bool
       return { success: true, orderId: order.orderId };
     }
 
+    // Also insert individual line items into order_items to freeze historical pricing
+    if (order.itemDetails && order.itemDetails.length > 0) {
+      const itemsPayload = order.itemDetails.map((item) => ({
+        order_id: payload.id,
+        product_name: item.name,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        total_price: item.lineTotal,
+      }));
+      const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
+      if (itemsError) {
+        console.warn('order_items insert notice:', itemsError.message);
+      }
+    }
+
     revalidatePath('/dashboard');
     return { success: true, orderId: order.orderId };
   } catch (err: any) {
