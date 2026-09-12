@@ -13,6 +13,7 @@ export interface MenuItem {
   originalPrice?: number;
   description: string;
   image?: string;
+  branch?: string;
 }
 
 export interface Review {

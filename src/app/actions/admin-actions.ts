@@ -45,6 +45,7 @@ export async function fetchMenuItemsAction(): Promise<{ success: boolean; data: 
       originalPrice: row.original_price ? Number(row.original_price) : undefined,
       description: row.description || '',
       image: row.image || undefined,
+      branch: row.branch || undefined,
     }));
 
     return { success: true, data: items };
@@ -72,6 +73,7 @@ export async function createMenuItemAction(item: MenuItem): Promise<{ success: b
       original_price: item.originalPrice || null,
       description: item.description || '',
       image: item.image || null,
+      branch: item.branch || null,
     }]);
 
     if (error) {
@@ -104,6 +106,7 @@ export async function updateMenuItemAction(id: string, item: Partial<MenuItem>):
     if (item.originalPrice !== undefined) updatePayload.original_price = item.originalPrice;
     if (item.description !== undefined) updatePayload.description = item.description;
     if (item.image !== undefined) updatePayload.image = item.image || null;
+    if (item.branch !== undefined) updatePayload.branch = item.branch || null;
 
     const { error } = await supabase
       .from('menu_items')
@@ -119,6 +122,48 @@ export async function updateMenuItemAction(id: string, item: Partial<MenuItem>):
     return { success: true };
   } catch (err: any) {
     return { success: true };
+  }
+}
+
+export async function bulkUpsertMenuItemsAction(
+  items: MenuItem[]
+): Promise<{ success: boolean; error?: string; count?: number }> {
+  if (!(await checkAdminAuth())) {
+    return { success: false, error: 'Unauthorized: Admin session required' };
+  }
+
+  try {
+    if (!isSupabaseServerConfigured()) {
+      return { success: true, count: items.length };
+    }
+
+    const supabase = getSupabaseServerClient();
+    const payload = items.map((item) => ({
+      id: item.id || `menu-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      name: item.name,
+      category: item.category,
+      price: item.price,
+      original_price: item.originalPrice ?? null,
+      description: item.description || '',
+      image: item.image || null,
+      branch: item.branch || null,
+    }));
+
+    const { error } = await supabase
+      .from('menu_items')
+      .upsert(payload, { onConflict: 'id' });
+
+    if (error) {
+      console.warn('bulkUpsertMenuItemsAction error:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/dashboard');
+    revalidatePath('/');
+    revalidatePath('/menu');
+    return { success: true, count: items.length };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to bulk upsert items' };
   }
 }
 

@@ -7,13 +7,19 @@
 CREATE TABLE IF NOT EXISTS public.menu_items (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    category TEXT NOT NULL CHECK (category IN ('biriyani', 'mains', 'breads', 'beverages', 'sides', 'desserts')),
+    category TEXT NOT NULL,
     price NUMERIC(10, 2) NOT NULL,
     original_price NUMERIC(10, 2),
     description TEXT DEFAULT '',
     image TEXT,
+    branch TEXT,
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+-- Migration for existing databases:
+ALTER TABLE public.menu_items DROP CONSTRAINT IF EXISTS menu_items_category_check;
+ALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS branch TEXT;
+
 
 -- 2. ENQUIRIES / ORDERS TABLE
 CREATE TABLE IF NOT EXISTS public.enquiries (

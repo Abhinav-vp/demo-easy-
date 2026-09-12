@@ -10,11 +10,13 @@ import {
   updateEnquiryStatus, deleteStoredEnquiry, clearAllStoredEnquiries
 } from "@/lib/restaurant-data";
 import { createClient } from "@/lib/supabase/client";
+import * as XLSX from 'xlsx';
 import {
   fetchMenuItemsAction,
   createMenuItemAction,
   updateMenuItemAction,
   deleteMenuItemAction,
+  bulkUpsertMenuItemsAction,
   fetchEnquiriesAction,
   updateOrderStatusAction,
   deleteEnquiryAction,
@@ -25,9 +27,35 @@ import {
   deleteOfferAction,
   toggleOfferActiveAction,
 } from "@/app/actions/admin-actions";
-import { ForkKnife, NewspaperClipping, Tag, Upload, CheckCircle, PencilSimple, Trash, MagnifyingGlass, PlayCircle, PauseCircle, Phone, HouseLine, CircleNotch, X, SignOut, CloudCheck, WarningCircle, BellRinging, SpeakerHigh, SpeakerSlash, Storefront, Printer } from "@phosphor-icons/react";
+import { ForkKnife, NewspaperClipping, Tag, Upload, CheckCircle, PencilSimple, Trash, MagnifyingGlass, PlayCircle, PauseCircle, Phone, HouseLine, CircleNotch, X, SignOut, CloudCheck, WarningCircle, BellRinging, SpeakerHigh, SpeakerSlash, Storefront, Printer, FileXls, UploadSimple, DownloadSimple, XCircle, Warning } from "@phosphor-icons/react";
 
 type AdminMenuItem = MenuItem & { id: string };
+
+interface ParsedProductRow {
+  rowIndex: number;
+  rawId: string;
+  name: string;
+  category: string;
+  price: number;
+  originalPrice?: number;
+  description: string;
+  image?: string;
+  branch?: string;
+  status: 'valid' | 'error';
+  errorReason?: string;
+  isDuplicate: boolean;
+  existingId?: string;
+  isSample: boolean;
+}
+
+interface ImportSummary {
+  total: number;
+  added: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  errors: { row: number; name: string; error: string }[];
+}
 
 export default function DashboardClient({ userEmail }: { userEmail: string }) {
   const router = useRouter();
@@ -45,6 +73,19 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
   const [formData, setFormData] = useState({
     name: '', price: '', category: 'fruits-vegetables' as MenuItem['category'], description: '', image: ''
   });
+
+  // Bulk Excel Import States
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFileName, setImportFileName] = useState('');
+  const [parsedProducts, setParsedProducts] = useState<ParsedProductRow[]>([]);
+  const [duplicateStrategy, setDuplicateStrategy] = useState<'update' | 'skip'>('update');
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'error' | 'duplicate'>('all');
+  const [previewSearch, setPreviewSearch] = useState('');
+  const [previewPage, setPreviewPage] = useState(1);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number; percent: number } | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
 
   // Enquiries State
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
@@ -463,6 +504,437 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     }
   };
 
+  // ==========================================
+  // BULK EXCEL TEMPLATE & IMPORT SYSTEM
+  // ==========================================
+
+  const handleDownloadTemplate = () => {
+    try {
+      const templateData = [
+        {
+          'Product ID': 'SAMPLE-001',
+          'Product Name': '[SAMPLE] Farm Fresh Vine Tomatoes (1 kg)',
+          'Category': 'fruits-vegetables',
+          'Price': 38,
+          'Offer Price': 48,
+          'Description': 'Fresh and juicy locally sourced red tomatoes',
+          'Image URL': 'https://images.unsplash.com/photo-1546470427-0d4db154ceb7',
+          'Branch': 'All',
+        },
+        {
+          'Product ID': 'SAMPLE-002',
+          'Product Name': '[SAMPLE] Farm Fresh Cow Milk (1 L)',
+          'Category': 'dairy-bakery',
+          'Price': 58,
+          'Offer Price': 65,
+          'Description': 'Pure full-cream farm cow milk',
+          'Image URL': 'https://images.unsplash.com/photo-1550583724-b2692b85b150',
+          'Branch': 'Pallikkuni',
+        },
+        {
+          'Product ID': 'SAMPLE-003',
+          'Product Name': '[SAMPLE] Aashirvaad Shudh Chakki Atta (5 kg)',
+          'Category': 'groceries-staples',
+          'Price': 265,
+          'Offer Price': 295,
+          'Description': '100% whole wheat flour, soft rotis',
+          'Image URL': 'https://images.unsplash.com/photo-1586201375761-83865001e31c',
+          'Branch': 'Kariyad',
+        },
+      ];
+
+      const wb = XLSX.utils.book_new();
+
+      // Sheet 1: Products
+      const wsProducts = XLSX.utils.json_to_sheet(templateData);
+      wsProducts['!cols'] = [
+        { wch: 16 }, // Product ID
+        { wch: 40 }, // Product Name
+        { wch: 22 }, // Category
+        { wch: 12 }, // Price
+        { wch: 14 }, // Offer Price
+        { wch: 45 }, // Description
+        { wch: 45 }, // Image URL
+        { wch: 14 }, // Branch
+      ];
+      XLSX.utils.book_append_sheet(wb, wsProducts, 'Products');
+
+      // Sheet 2: Guidance
+      const instructionsData = [
+        {
+          'Field Name': 'Product ID',
+          'Required': 'No (Optional)',
+          'Description': 'Unique identifier or SKU (e.g., PROD-101). If left blank, a unique ID is auto-generated.',
+        },
+        {
+          'Field Name': 'Product Name',
+          'Required': 'YES',
+          'Description': 'Full name of the item. Unicode/Malayalam characters are supported.',
+        },
+        {
+          'Field Name': 'Category',
+          'Required': 'YES',
+          'Description': 'fruits-vegetables, dairy-bakery, groceries-staples, snacks-beverages, or household-essentials.',
+        },
+        {
+          'Field Name': 'Price',
+          'Required': 'YES',
+          'Description': 'Selling price in ₹ (e.g. 38 or 38.50). Must be greater than 0.',
+        },
+        {
+          'Field Name': 'Offer Price',
+          'Required': 'No (Optional)',
+          'Description': 'Original MRP / strike-through price in ₹ (e.g. 48).',
+        },
+        {
+          'Field Name': 'Description',
+          'Required': 'No (Optional)',
+          'Description': 'Details, weight, ingredients, or specifications.',
+        },
+        {
+          'Field Name': 'Image URL',
+          'Required': 'No (Optional)',
+          'Description': 'Direct link to an image on the web (https://...) or local image path.',
+        },
+        {
+          'Field Name': 'Branch',
+          'Required': 'No (Optional)',
+          'Description': 'Specific branch: "All", "Kariyad", or "Pallikkuni". Defaults to "All".',
+        },
+      ];
+      const wsInstructions = XLSX.utils.json_to_sheet(instructionsData);
+      wsInstructions['!cols'] = [
+        { wch: 20 },
+        { wch: 16 },
+        { wch: 75 },
+      ];
+      XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions & Categories');
+
+      XLSX.writeFile(wb, 'supermarket_products_template.xlsx');
+    } catch (err: any) {
+      console.error('Download template error:', err);
+      setActionError('Failed to generate Excel template: ' + (err?.message || 'Unknown error'));
+    }
+  };
+
+  const normalizeImportRow = (rawRow: any, idx: number): ParsedProductRow | null => {
+    // Helper to find column values flexibly
+    const getVal = (...possibleKeys: string[]) => {
+      for (const pk of possibleKeys) {
+        for (const k of Object.keys(rawRow)) {
+          const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const cleanPk = pk.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (cleanK === cleanPk) {
+            return rawRow[k];
+          }
+        }
+      }
+      return undefined;
+    };
+
+    const rawId = String(getVal('productid', 'id', 'sku', 'code') || '').trim();
+    const rawName = String(getVal('productname', 'name', 'title', 'itemname') || '').trim();
+    const rawCategory = String(getVal('category', 'productcategory', 'department') || '').trim();
+    const rawPrice = getVal('price', 'sellingprice', 'rate', 'regularprice');
+    const rawOfferPrice = getVal('offerprice', 'originalprice', 'mrpprice', 'mrp', 'discountprice');
+    const rawDesc = String(getVal('description', 'details', 'productdescription') || '').trim();
+    const rawImage = String(getVal('imageurl', 'image', 'photourl', 'photo') || '').trim();
+    const rawBranch = String(getVal('branch', 'store', 'location', 'storebranch') || '').trim();
+
+    // Skip totally empty rows
+    if (!rawName && !rawPrice && !rawCategory) return null;
+
+    // Skip example / sample template rows so they are never imported
+    const isSample = rawId.toUpperCase().startsWith('SAMPLE') || rawName.toUpperCase().includes('[SAMPLE]');
+    if (isSample) return null;
+
+    const errors: string[] = [];
+
+    // Validate Name
+    if (!rawName) {
+      errors.push('Product name is required');
+    }
+
+    // Validate Price
+    const priceNum = typeof rawPrice === 'number'
+      ? rawPrice
+      : parseFloat(String(rawPrice || '0').replace(/[^0-9.]/g, ''));
+
+    if (isNaN(priceNum) || priceNum <= 0) {
+      errors.push('Price must be a valid number greater than 0');
+    }
+
+    // Validate Offer / MRP Price
+    let originalPriceNum: number | undefined = undefined;
+    if (rawOfferPrice !== undefined && String(rawOfferPrice).trim() !== '') {
+      originalPriceNum = typeof rawOfferPrice === 'number'
+        ? rawOfferPrice
+        : parseFloat(String(rawOfferPrice).replace(/[^0-9.]/g, ''));
+
+      if (isNaN(originalPriceNum) || originalPriceNum < 0) {
+        errors.push('Offer/MRP price must be a valid positive number');
+      }
+    }
+
+    // Validate & normalize category
+    let category = 'groceries-staples';
+    if (rawCategory) {
+      const catLower = rawCategory.toLowerCase();
+      if (catLower.includes('fruit') || catLower.includes('veg')) category = 'fruits-vegetables';
+      else if (catLower.includes('dairy') || catLower.includes('bake') || catLower.includes('milk')) category = 'dairy-bakery';
+      else if (catLower.includes('snack') || catLower.includes('bev') || catLower.includes('drink')) category = 'snacks-beverages';
+      else if (catLower.includes('house') || catLower.includes('clean') || catLower.includes('essential')) category = 'household-essentials';
+      else if (catLower.includes('groc') || catLower.includes('staple')) category = 'groceries-staples';
+      else category = rawCategory.toLowerCase().replace(/\s+/g, '-');
+    }
+
+    // Validate Branch
+    let branch: string | undefined = undefined;
+    if (rawBranch) {
+      const bLower = rawBranch.toLowerCase();
+      if (bLower.includes('kari')) branch = 'Kariyad';
+      else if (bLower.includes('palli')) branch = 'Pallikkuni';
+      else if (bLower === 'all' || bLower === 'both') branch = 'All';
+      else {
+        errors.push(`Invalid branch "${rawBranch}". Must be Kariyad, Pallikkuni, or All.`);
+      }
+    }
+
+    // Duplicate check against existing items
+    const existing = menuItems.find(
+      m => (rawId && m.id === rawId) || (m.name.toLowerCase().trim() === rawName.toLowerCase().trim())
+    );
+
+    return {
+      rowIndex: idx + 2,
+      rawId,
+      name: rawName,
+      category,
+      price: priceNum || 0,
+      originalPrice: originalPriceNum,
+      description: rawDesc,
+      image: rawImage || undefined,
+      branch: branch || 'All',
+      status: errors.length === 0 ? 'valid' : 'error',
+      errorReason: errors.join(', '),
+      isDuplicate: Boolean(existing),
+      existingId: existing?.id,
+      isSample: false,
+    };
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportFileName(file.name);
+    const reader = new FileReader();
+
+    reader.onload = (evt) => {
+      try {
+        const arrayBuffer = evt.target?.result as ArrayBuffer;
+        const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+
+        // Select 'Products' sheet if present, else first sheet
+        const sheetName = workbook.SheetNames.includes('Products')
+          ? 'Products'
+          : workbook.SheetNames[0];
+
+        if (!sheetName) {
+          setActionError('The selected file does not contain any sheets.');
+          return;
+        }
+
+        const worksheet = workbook.Sheets[sheetName];
+        const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+        if (rawRows.length === 0) {
+          setActionError('No product rows found in the selected Excel file.');
+          return;
+        }
+
+        const parsed: ParsedProductRow[] = [];
+        rawRows.forEach((r, idx) => {
+          const rowObj = normalizeImportRow(r, idx);
+          if (rowObj) parsed.push(rowObj);
+        });
+
+        if (parsed.length === 0) {
+          setActionError('No valid data rows found in the sheet (only sample or empty rows detected).');
+          return;
+        }
+
+        setParsedProducts(parsed);
+        setPreviewFilter('all');
+        setPreviewSearch('');
+        setPreviewPage(1);
+        setImportSummary(null);
+        setShowImportModal(true);
+      } catch (err: any) {
+        console.error('Error parsing Excel file:', err);
+        setActionError('Failed to read Excel file. Please ensure it is a valid .xlsx or .csv file.');
+      } finally {
+        // Reset file input value so user can select the same file again if needed
+        if (e.target) e.target.value = '';
+      }
+    };
+
+    reader.onerror = () => {
+      setActionError('Error reading file from disk.');
+      if (e.target) e.target.value = '';
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleExecuteImport = async () => {
+    const validRows = parsedProducts.filter(r => r.status === 'valid');
+    if (validRows.length === 0) return;
+
+    setIsImporting(true);
+    setActionError(null);
+
+    // Filter according to duplicate strategy
+    const rowsToProcess = validRows.filter(r => {
+      if (duplicateStrategy === 'skip' && r.isDuplicate) return false;
+      return true;
+    });
+
+    const skippedDueToDuplicate = validRows.filter(r => duplicateStrategy === 'skip' && r.isDuplicate).length;
+    const errorRows = parsedProducts.filter(r => r.status === 'error');
+
+    const totalToProcess = rowsToProcess.length;
+    setImportProgress({ current: 0, total: totalToProcess, percent: 0 });
+
+    const CHUNK_SIZE = 100;
+    const successfullyImported: MenuItem[] = [];
+    const failedImports: { row: number; name: string; error: string }[] = [];
+
+    const existingById = new Map<string, AdminMenuItem>(menuItems.map(m => [m.id, m]));
+    const existingByName = new Map<string, AdminMenuItem>(menuItems.map(m => [m.name.toLowerCase().trim(), m]));
+
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    for (let i = 0; i < totalToProcess; i += CHUNK_SIZE) {
+      const chunk = rowsToProcess.slice(i, i + CHUNK_SIZE);
+      const chunkItems: MenuItem[] = [];
+
+      for (const row of chunk) {
+        let itemId = row.rawId;
+        const matched = (row.rawId && existingById.get(row.rawId)) || existingByName.get(row.name.toLowerCase().trim());
+
+        if (matched) {
+          itemId = matched.id;
+          updatedCount++;
+        } else {
+          if (!itemId) {
+            itemId = `prod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+          }
+          addedCount++;
+        }
+
+        const itemObj: MenuItem = {
+          id: itemId,
+          name: row.name,
+          category: row.category,
+          price: row.price,
+          originalPrice: row.originalPrice,
+          description: row.description,
+          image: row.image,
+          branch: row.branch,
+        };
+        chunkItems.push(itemObj);
+      }
+
+      // Bulk upsert chunk to backend/Supabase
+      try {
+        const res = await bulkUpsertMenuItemsAction(chunkItems);
+        if (res.success) {
+          successfullyImported.push(...chunkItems);
+        } else {
+          chunk.forEach(r => {
+            failedImports.push({
+              row: r.rowIndex,
+              name: r.name,
+              error: res.error || 'Server error during batch insertion',
+            });
+          });
+          chunk.forEach(r => {
+            const isMatch = (r.rawId && existingById.get(r.rawId)) || existingByName.get(r.name.toLowerCase().trim());
+            if (isMatch) updatedCount--;
+            else addedCount--;
+          });
+        }
+      } catch (err: any) {
+        chunk.forEach(r => {
+          failedImports.push({
+            row: r.rowIndex,
+            name: r.name,
+            error: err?.message || 'Network exception during import',
+          });
+        });
+      }
+
+      const currentCount = Math.min(i + CHUNK_SIZE, totalToProcess);
+      setImportProgress({
+        current: currentCount,
+        total: totalToProcess,
+        percent: Math.round((currentCount / totalToProcess) * 100),
+      });
+
+      // Tiny delay to let browser render progress
+      await new Promise(res => setTimeout(res, 20));
+    }
+
+    // Merge successfully imported items into state and localStorage
+    if (successfullyImported.length > 0) {
+      const mergedMap = new Map<string, AdminMenuItem>(menuItems.map(m => [m.id, m]));
+      for (const item of successfullyImported) {
+        mergedMap.set(item.id, item as AdminMenuItem);
+      }
+      const updatedList = Array.from(mergedMap.values());
+      setMenuItems(updatedList);
+      saveMenuItems(updatedList);
+    }
+
+    // Combine validation errors and server failures
+    const allErrors = [
+      ...errorRows.map(r => ({ row: r.rowIndex, name: r.name, error: r.errorReason || 'Validation error' })),
+      ...failedImports,
+    ];
+
+    setImportSummary({
+      total: parsedProducts.length,
+      added: Math.max(0, addedCount),
+      updated: Math.max(0, updatedCount),
+      skipped: skippedDueToDuplicate,
+      failed: allErrors.length,
+      errors: allErrors,
+    });
+
+    setIsImporting(false);
+    setImportProgress(null);
+  };
+
+  const handleDownloadErrorReport = () => {
+    if (!importSummary || importSummary.errors.length === 0) return;
+    try {
+      const errorData = importSummary.errors.map(e => ({
+        'Row Number': e.row,
+        'Product Name': e.name || '(Empty)',
+        'Reason for Failure': e.error,
+      }));
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(errorData);
+      ws['!cols'] = [{ wch: 14 }, { wch: 35 }, { wch: 50 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'Failed Products');
+      XLSX.writeFile(wb, 'import_failed_products_report.xlsx');
+    } catch (err) {
+      console.error('Error exporting error report:', err);
+    }
+  };
+
   // Enquiry management
   const handleDeleteEnquiry = async (id: string) => {
     const previous = [...enquiries];
@@ -513,6 +985,29 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     const matchesBranch = branchFilter === 'all' || (e.branch || 'Pallikkuni') === branchFilter;
     return matchesStatus && matchesBranch;
   });
+
+  // Filtered preview items for Import Modal
+  const filteredPreviewProducts = parsedProducts.filter(p => {
+    const matchesFilter =
+      previewFilter === 'all' ? true :
+      previewFilter === 'valid' ? p.status === 'valid' :
+      previewFilter === 'error' ? p.status === 'error' :
+      p.isDuplicate;
+
+    const matchesSearch = !previewSearch ||
+      p.name.toLowerCase().includes(previewSearch.toLowerCase()) ||
+      p.category.toLowerCase().includes(previewSearch.toLowerCase()) ||
+      p.rawId.toLowerCase().includes(previewSearch.toLowerCase());
+
+    return matchesFilter && matchesSearch;
+  });
+
+  const totalFilteredPreviewCount = filteredPreviewProducts.length;
+  const PREVIEW_PAGE_SIZE = 50;
+  const displayedPreviewProducts = filteredPreviewProducts.slice(
+    (previewPage - 1) * PREVIEW_PAGE_SIZE,
+    previewPage * PREVIEW_PAGE_SIZE
+  );
 
   const handlePrintOrder = (enq: Enquiry) => {
     const printWindow = window.open('', '_blank', 'width=420,height=650');
@@ -945,18 +1440,47 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
         {/* ====== MENU ITEMS TAB ====== */}
         {activeTab === 'menu' && (
           <div>
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
               <div>
                 <h2 className="text-xl font-extrabold text-white">Supermarket Products & Inventory</h2>
-                <p className="text-xs text-slate-400 mt-1">Manage grocery items, prices, and stock categories stored locally</p>
+                <p className="text-xs text-slate-400 mt-1">Manage grocery items, prices, stock categories, and bulk Excel imports</p>
               </div>
-              <button
-                onClick={() => { resetForm(); setShowAddForm(true); }}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold text-sm flex items-center gap-2 hover:from-emerald-500 hover:to-teal-400 transition-smooth shadow-lg shadow-emerald-500/20"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-                Add Product
-              </button>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleDownloadTemplate}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold flex items-center gap-2 transition-smooth shadow-sm cursor-pointer"
+                  title="Download .xlsx sample template for bulk product management"
+                >
+                  <FileXls className="w-4 h-4 text-emerald-400" />
+                  <span>Download Excel Template</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold flex items-center gap-2 transition-smooth shadow-sm cursor-pointer"
+                  title="Import products from Excel (.xlsx) or CSV"
+                >
+                  <UploadSimple className="w-4 h-4 text-amber-400" />
+                  <span>Import Products</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+
+                <button
+                  onClick={() => { resetForm(); setShowAddForm(true); }}
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold text-sm flex items-center gap-2 hover:from-emerald-500 hover:to-teal-400 transition-smooth shadow-lg shadow-emerald-500/20 cursor-pointer"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                  Add Product
+                </button>
+              </div>
             </div>
 
             {/* Add/Edit Form */}
@@ -1555,6 +2079,433 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
           </div>
         )}
 
+      {/* Bulk Excel Import & Preview Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-5xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/90 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                  <FileXls className="w-5 h-5" weight="bold" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-lg font-bold text-white truncate">
+                    {importSummary ? 'Import Completed' : 'Bulk Product Import Preview'}
+                  </h3>
+                  <p className="text-xs text-slate-400 truncate">
+                    {importSummary
+                      ? 'Review the results of your bulk product import'
+                      : importFileName || 'Review and validate products before importing'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isImporting}
+                onClick={() => {
+                  if (!isImporting) {
+                    setShowImportModal(false);
+                    setImportSummary(null);
+                  }
+                }}
+                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-transparent transition-smooth"
+                aria-label="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* If Import Completed: Show Summary Screen */}
+            {importSummary ? (
+              <div className="p-6 space-y-6 overflow-y-auto">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/50 text-center">
+                    <p className="text-xs text-slate-400 font-medium">Total Rows</p>
+                    <p className="text-2xl font-bold text-white mt-1">{importSummary.total}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                    <p className="text-xs text-emerald-400 font-medium">✓ Added</p>
+                    <p className="text-2xl font-bold text-emerald-300 mt-1">{importSummary.added}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-sky-500/10 border border-sky-500/20 text-center">
+                    <p className="text-xs text-sky-400 font-medium">✓ Updated</p>
+                    <p className="text-2xl font-bold text-sky-300 mt-1">{importSummary.updated}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+                    <p className="text-xs text-amber-400 font-medium">⊘ Skipped</p>
+                    <p className="text-2xl font-bold text-amber-300 mt-1">{importSummary.skipped}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-center col-span-2 sm:col-span-1">
+                    <p className="text-xs text-red-400 font-medium">✕ Failed</p>
+                    <p className="text-2xl font-bold text-red-300 mt-1">{importSummary.failed}</p>
+                  </div>
+                </div>
+
+                {importSummary.failed > 0 ? (
+                  <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-200 text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <WarningCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-white">Some products could not be imported</p>
+                        <p className="text-xs text-red-300 mt-0.5">
+                          {importSummary.failed} row(s) encountered validation or database errors. Download the error report to view reasons.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDownloadErrorReport}
+                      className="px-3.5 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-500/40 text-xs font-bold flex items-center gap-1.5 shrink-0 transition-smooth"
+                    >
+                      <DownloadSimple className="w-4 h-4" />
+                      Download Error Report
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-sm flex items-center gap-2.5">
+                    <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" weight="fill" />
+                    <div>
+                      <p className="font-semibold text-white">All valid products successfully imported!</p>
+                      <p className="text-xs text-emerald-300 mt-0.5">
+                        Products are now active in the supermarket catalog and immediately visible to customers.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImportModal(false);
+                      setImportSummary(null);
+                    }}
+                    className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-bold shadow-lg shadow-amber-500/20 transition-smooth"
+                  >
+                    Done & View Products
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Preview & Validation Screen */
+              <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                
+                {/* Stats & Duplicate Strategy Bar */}
+                <div className="p-4 sm:p-6 pb-4 border-b border-slate-800 bg-slate-900/50 space-y-4 shrink-0">
+                  {/* Metric Pills */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="px-3.5 py-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60">
+                      <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider block">Found</span>
+                      <span className="text-xl font-bold text-white">{parsedProducts.length}</span>
+                      <span className="text-xs text-slate-500 ml-1">products</span>
+                    </div>
+                    <div className="px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                      <span className="text-[11px] font-medium text-emerald-400 uppercase tracking-wider block">Valid</span>
+                      <span className="text-xl font-bold text-emerald-400">
+                        {parsedProducts.filter(p => p.status === 'valid').length}
+                      </span>
+                      <span className="text-xs text-emerald-500/80 ml-1">ready</span>
+                    </div>
+                    <div className="px-3.5 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
+                      <span className="text-[11px] font-medium text-red-400 uppercase tracking-wider block">Errors</span>
+                      <span className="text-xl font-bold text-red-400">
+                        {parsedProducts.filter(p => p.status === 'error').length}
+                      </span>
+                      <span className="text-xs text-red-500/80 ml-1">invalid</span>
+                    </div>
+                    <div className="px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                      <span className="text-[11px] font-medium text-amber-400 uppercase tracking-wider block">Duplicates / Existing</span>
+                      <span className="text-xl font-bold text-amber-400">
+                        {parsedProducts.filter(p => p.isDuplicate).length}
+                      </span>
+                      <span className="text-xs text-amber-500/80 ml-1">matched</span>
+                    </div>
+                  </div>
+
+                  {/* Duplicate Strategy Radio Options */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-800/30 border border-slate-800">
+                    <span className="text-xs font-semibold text-slate-300">If product already exists (by SKU/ID or Name):</span>
+                    <div className="flex items-center gap-4 text-xs">
+                      <label className="flex items-center gap-2 cursor-pointer text-slate-200 hover:text-white">
+                        <input
+                          type="radio"
+                          name="duplicateStrategy"
+                          value="update"
+                          checked={duplicateStrategy === 'update'}
+                          onChange={() => setDuplicateStrategy('update')}
+                          disabled={isImporting}
+                          className="text-amber-500 focus:ring-amber-500 bg-slate-900 border-slate-700"
+                        />
+                        <span><strong>Update existing product</strong> (Recommended)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-slate-200 hover:text-white">
+                        <input
+                          type="radio"
+                          name="duplicateStrategy"
+                          value="skip"
+                          checked={duplicateStrategy === 'skip'}
+                          onChange={() => setDuplicateStrategy('skip')}
+                          disabled={isImporting}
+                          className="text-amber-500 focus:ring-amber-500 bg-slate-900 border-slate-700"
+                        />
+                        <span><strong>Skip existing product</strong></span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => { setPreviewFilter('all'); setPreviewPage(1); }}
+                        className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-smooth ${
+                          previewFilter === 'all'
+                            ? 'bg-slate-700 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        All ({parsedProducts.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPreviewFilter('valid'); setPreviewPage(1); }}
+                        className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-smooth ${
+                          previewFilter === 'valid'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        ✓ Valid ({parsedProducts.filter(p => p.status === 'valid').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPreviewFilter('error'); setPreviewPage(1); }}
+                        className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-smooth ${
+                          previewFilter === 'error'
+                            ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        ✕ Errors ({parsedProducts.filter(p => p.status === 'error').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPreviewFilter('duplicate'); setPreviewPage(1); }}
+                        className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-smooth ${
+                          previewFilter === 'duplicate'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        ℹ Existing ({parsedProducts.filter(p => p.isDuplicate).length})
+                      </button>
+                    </div>
+
+                    <div className="relative w-full sm:w-64">
+                      <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        value={previewSearch}
+                        onChange={e => { setPreviewSearch(e.target.value); setPreviewPage(1); }}
+                        placeholder="Filter by name, ID, or category..."
+                        className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-700/80 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-smooth"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table Container */}
+                <div className="flex-1 overflow-y-auto min-h-[260px] border-b border-slate-800">
+                  <table className="w-full text-left text-xs text-slate-300">
+                    <thead className="bg-slate-950/90 text-[11px] font-bold text-slate-400 uppercase tracking-wider sticky top-0 z-10 backdrop-blur-md border-b border-slate-800">
+                      <tr>
+                        <th className="py-2.5 px-4 w-12 text-center">#</th>
+                        <th className="py-2.5 px-4">Product Name</th>
+                        <th className="py-2.5 px-4">Category</th>
+                        <th className="py-2.5 px-4 text-right">Price</th>
+                        <th className="py-2.5 px-4 text-right">Offer/MRP</th>
+                        <th className="py-2.5 px-4">Branch</th>
+                        <th className="py-2.5 px-4 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {displayedPreviewProducts.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-12 text-center text-slate-500">
+                            No products match your filter criteria.
+                          </td>
+                        </tr>
+                      ) : (
+                        displayedPreviewProducts.map((p) => (
+                          <tr
+                            key={p.rowIndex}
+                            className={`hover:bg-slate-800/40 transition-colors ${
+                              p.status === 'error' ? 'bg-red-500/5' : ''
+                            }`}
+                          >
+                            <td className="py-2.5 px-4 text-slate-500 text-center font-mono">{p.rowIndex}</td>
+                            <td className="py-2.5 px-4 font-medium text-white max-w-[200px]">
+                              <div className="truncate">{p.name || <span className="text-red-400 italic">(Empty Name)</span>}</div>
+                              {p.rawId && (
+                                <span className="text-[10px] text-slate-500 font-mono block">ID: {p.rawId}</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-slate-300 whitespace-nowrap">
+                              <span className="px-2 py-0.5 rounded bg-slate-800 text-[11px] text-slate-300 border border-slate-700/50">
+                                {p.category}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-semibold text-white whitespace-nowrap">
+                              ₹{p.price.toFixed(2)}
+                            </td>
+                            <td className="py-2.5 px-4 text-right text-slate-400 whitespace-nowrap">
+                              {p.originalPrice ? `₹${p.originalPrice.toFixed(2)}` : '—'}
+                            </td>
+                            <td className="py-2.5 px-4 whitespace-nowrap">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
+                                p.branch === 'Kariyad'
+                                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                                  : p.branch === 'Pallikkuni'
+                                  ? 'bg-purple-500/10 text-purple-300 border-purple-500/20'
+                                  : 'bg-slate-800 text-slate-400 border-slate-700/40'
+                              }`}>
+                                {p.branch || 'All'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                              {p.status === 'valid' ? (
+                                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-[10px]">
+                                  <CheckCircle className="w-3.5 h-3.5" weight="fill" />
+                                  <span>Valid</span>
+                                  {p.isDuplicate && (
+                                    <span className="ml-1 text-[9px] text-amber-300 bg-amber-500/20 px-1 rounded">Existing</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-[10px]" title={p.errorReason}>
+                                  <XCircle className="w-3.5 h-3.5" weight="fill" />
+                                  <span className="truncate max-w-[120px]">{p.errorReason || 'Error'}</span>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Table Pagination & Controls */}
+                <div className="px-6 py-3 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400 shrink-0">
+                  <span>
+                    Showing{' '}
+                    <strong className="text-white">
+                      {totalFilteredPreviewCount === 0 ? 0 : (previewPage - 1) * PREVIEW_PAGE_SIZE + 1}
+                    </strong>{' '}
+                    to{' '}
+                    <strong className="text-white">
+                      {Math.min(previewPage * PREVIEW_PAGE_SIZE, totalFilteredPreviewCount)}
+                    </strong>{' '}
+                    of <strong className="text-white">{totalFilteredPreviewCount}</strong> items
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={previewPage <= 1 || isImporting}
+                      onClick={() => setPreviewPage(p => Math.max(1, p - 1))}
+                      className="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 text-white transition-smooth"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-slate-300 font-mono">
+                      Page {previewPage} of {Math.max(1, Math.ceil(totalFilteredPreviewCount / PREVIEW_PAGE_SIZE))}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={previewPage >= Math.ceil(totalFilteredPreviewCount / PREVIEW_PAGE_SIZE) || isImporting}
+                      onClick={() => setPreviewPage(p => p + 1)}
+                      className="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 text-white transition-smooth"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Progress Bar (when importing) */}
+                {isImporting && importProgress && (
+                  <div className="p-4 bg-slate-900 border-b border-slate-800 space-y-2 shrink-0">
+                    <div className="flex items-center justify-between text-xs font-semibold">
+                      <span className="text-amber-400 flex items-center gap-2">
+                        <CircleNotch className="w-4 h-4 animate-spin text-amber-400" />
+                        Importing products in batches...
+                      </span>
+                      <span className="text-white font-mono">
+                        {importProgress.current} / {importProgress.total} ({importProgress.percent}%)
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-300 rounded-full"
+                        style={{ width: `${importProgress.percent}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Processing 100 products per batch to ensure database stability. Please do not close this window.
+                    </p>
+                  </div>
+                )}
+
+                {/* Modal Action Buttons */}
+                <div className="flex items-center justify-between p-4 sm:p-6 bg-slate-900/90 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isImporting}
+                    onClick={() => {
+                      setShowImportModal(false);
+                      setImportSummary(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold disabled:opacity-40 transition-smooth"
+                  >
+                    Cancel
+                  </button>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={isImporting || parsedProducts.filter(p => p.status === 'valid').length === 0}
+                      onClick={handleExecuteImport}
+                      className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-lg shadow-amber-500/20 disabled:opacity-40 disabled:hover:bg-amber-500 flex items-center gap-2 transition-smooth"
+                    >
+                      {isImporting ? (
+                        <>
+                          <CircleNotch className="w-4 h-4 animate-spin" />
+                          <span>Importing Products...</span>
+                        </>
+                      ) : (
+                        <>
+                          <UploadSimple className="w-4 h-4" weight="bold" />
+                          <span>
+                            Import Valid Products ({parsedProducts.filter(p => {
+                              if (p.status !== 'valid') return false;
+                              if (duplicateStrategy === 'skip' && p.isDuplicate) return false;
+                              return true;
+                            }).length})
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
 
       </div>
 
