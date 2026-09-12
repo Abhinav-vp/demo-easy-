@@ -3,30 +3,30 @@ import "./globals.css";
 import SmoothScroll from "@/components/SmoothScroll";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://restaurant-application-red.vercel.app"),
-  title: "ABR Asma Restaurant — Traditional Taste of Malabar",
-  description: "Authentic Taste of Malabar Culinary Heritage",
+  metadataBase: new URL("https://easymart-supermarket.vercel.app"),
+  title: "Easy Mart Supermarket — Pallikkuni | Fresh Groceries & Daily Essentials",
+  description: "Your trusted neighborhood supermarket in Pallikkuni, Peringathur. Farm fresh vegetables, fruits, dairy, rice, spices, and daily household essentials delivered to your door.",
   openGraph: {
-    title: "ABR Asma Restaurant — Traditional Taste of Malabar",
-    description: "Authentic Taste of Malabar Culinary Heritage",
-    url: "https://restaurant-application-red.vercel.app/",
-    siteName: "ABR Asma Restaurant",
+    title: "Easy Mart Supermarket — Pallikkuni | Fresh Groceries & Daily Essentials",
+    description: "Your trusted neighborhood supermarket in Pallikkuni, Peringathur. Farm fresh vegetables, fruits, dairy, rice, spices, and daily household essentials delivered to your door.",
+    url: "https://easymart-supermarket.vercel.app/",
+    siteName: "Easy Mart Supermarket",
     type: "website",
     locale: "en_IN",
     images: [
       {
-        url: "https://restaurant-application-red.vercel.app/og-image.jpg",
+        url: "/easy_mart_hero.jpg",
         width: 1200,
         height: 630,
-        alt: "ABR Asma Restaurant — Traditional Malabar Cuisine",
+        alt: "Easy Mart Supermarket Pallikkuni",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "ABR Asma Restaurant — Traditional Taste of Malabar",
-    description: "Authentic Taste of Malabar Culinary Heritage",
-    images: ["https://restaurant-application-red.vercel.app/og-image.jpg"],
+    title: "Easy Mart Supermarket — Pallikkuni",
+    description: "Fresh Farm Groceries & Essentials Delivered Daily in Pallikkuni",
+    images: ["/easy_mart_hero.jpg"],
   },
 };
 
@@ -45,11 +45,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="gradient-bg min-h-screen font-sans selection:bg-amber-500 selection:text-slate-950">
+      <body className="gradient-bg min-h-screen font-sans selection:bg-emerald-500 selection:text-slate-950">
         <SmoothScroll />
         {children}
       </body>
     </html>
   );
 }
-

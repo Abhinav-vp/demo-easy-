@@ -4,8 +4,8 @@ import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { Fire, Star, Ticket, Warning, CheckCircle, House, X } from "@phosphor-icons/react";
-import { MENU_ITEMS, INITIAL_REVIEWS, BUSINESS_PROFILE, MenuItem, Offer, Coupon, getMenuItems, getActiveOffers, getEffectivePrice, saveEnquiry, validateCoupon, generateOrderId, formatWhatsAppOrderMessage } from "@/lib/restaurant-data";
+import { Fire, Star, Warning, CheckCircle, House, X } from "@phosphor-icons/react";
+import { MENU_ITEMS, INITIAL_REVIEWS, BUSINESS_PROFILE, MenuItem, Offer, getMenuItems, getActiveOffers, getEffectivePrice, saveEnquiry, generateOrderId, formatWhatsAppOrderMessage } from "@/lib/restaurant-data";
 import { submitOrderAction } from "@/app/actions/order-actions";
 import { fetchMenuItemsAction, fetchOffersAction } from "@/app/actions/admin-actions";
 import RestaurantProfile from "@/components/RestaurantProfile";
@@ -34,12 +34,6 @@ export default function Home() {
   const menuSectionRef = useRef<HTMLElement>(null);
   const reviewsSectionRef = useRef<HTMLElement>(null);
 
-  // Coupon State
-  const [couponInput, setCouponInput] = useState("");
-  const [appliedCoupon, setAppliedCoupon] = useState<{ coupon: Coupon; discountAmount: number } | null>(null);
-  const [couponError, setCouponError] = useState("");
-  const [couponSuccess, setCouponSuccess] = useState("");
-
   // Checkout Modal State
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [customerName, setCustomerName] = useState("");
@@ -52,7 +46,7 @@ export default function Home() {
   const [lastPlacedOrderId, setLastPlacedOrderId] = useState("");
   const [orderError, setOrderError] = useState("");
 
-  // Load menu items, offers, and coupons from Supabase
+  // Load menu items and offers from Supabase
   useEffect(() => {
     let isMounted = true;
     async function loadFromSupabase() {
@@ -75,70 +69,16 @@ export default function Home() {
 
     loadFromSupabase();
 
-    // Listen for product/offer/coupon updates from admin
+    // Listen for product updates from admin
     const onUpdate = () => {
       loadFromSupabase();
     };
     window.addEventListener('orderflow_products_updated', onUpdate);
-    window.addEventListener('orderflow_coupons_updated', onUpdate);
     return () => {
       isMounted = false;
       window.removeEventListener('orderflow_products_updated', onUpdate);
-      window.removeEventListener('orderflow_coupons_updated', onUpdate);
     };
   }, []);
-
-  // Re-validate applied coupon when cart or offers change
-  useEffect(() => {
-    if (!appliedCoupon) return;
-    const subtotal = cart.reduce((sum, item) => {
-      const { price } = getEffectivePrice(item.dish, offers);
-      return sum + (price * item.quantity);
-    }, 0);
-
-    if (subtotal === 0) {
-      setAppliedCoupon(null);
-      setCouponSuccess("");
-      return;
-    }
-
-    const res = validateCoupon(appliedCoupon.coupon.code, subtotal);
-    if (res.valid && res.coupon) {
-      setAppliedCoupon({ coupon: res.coupon, discountAmount: res.discountAmount });
-    } else {
-      setAppliedCoupon(null);
-      setCouponError(res.message || "Applied coupon is no longer valid");
-      setCouponSuccess("");
-    }
-  }, [cart, offers]);
-
-  const handleApplyCoupon = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCouponError("");
-    setCouponSuccess("");
-
-    const subtotal = cart.reduce((sum, item) => {
-      const { price } = getEffectivePrice(item.dish, offers);
-      return sum + (price * item.quantity);
-    }, 0);
-
-    const res = validateCoupon(couponInput, subtotal);
-    if (!res.valid) {
-      setCouponError(res.message || "Invalid coupon code");
-      setAppliedCoupon(null);
-    } else if (res.coupon) {
-      setAppliedCoupon({ coupon: res.coupon, discountAmount: res.discountAmount });
-      setCouponSuccess(`Code '${res.coupon.code}' applied! Saved ₹${res.discountAmount.toFixed(2)}`);
-      setCouponError("");
-    }
-  };
-
-  const handleRemoveCoupon = () => {
-    setAppliedCoupon(null);
-    setCouponInput("");
-    setCouponError("");
-    setCouponSuccess("");
-  };
 
   const handleAddToCart = (dish: MenuItem) => {
     const existing = cart.find(item => item.dish.id === dish.id);
@@ -171,8 +111,7 @@ export default function Home() {
     const { price } = getEffectivePrice(item.dish, offers);
     return sum + (price * item.quantity);
   }, 0);
-  const cartDiscount = appliedCoupon ? appliedCoupon.discountAmount : 0;
-  const cartFinalTotal = Math.max(0, cartSubtotal - cartDiscount);
+  const cartFinalTotal = cartSubtotal;
 
   // Carousel State
   const [currentOfferIndex, setCurrentOfferIndex] = useState(0);
@@ -382,9 +321,7 @@ export default function Home() {
 
     const itemListString = cart.map(item => `${item.quantity}x ${item.dish.name}`).join(", ");
     const totalQuantity = cart.reduce((sum, item) => sum + item.quantity, 0);
-
-    const couponInfo = appliedCoupon ? ` (Coupon ${appliedCoupon.coupon.code}: -₹${cartDiscount.toFixed(2)})` : '';
-    const fullItemsDescription = `${itemListString}${couponInfo}`;
+    const fullItemsDescription = itemListString;
 
     const itemDetails = cart.map(item => {
       const priceInfo = getEffectivePrice(item.dish, offers);
@@ -408,8 +345,6 @@ export default function Home() {
         deliveryNotes: deliveryNotes.trim() || undefined,
         items: fullItemsDescription,
         itemDetails,
-        couponCode: appliedCoupon?.coupon.code,
-        couponDiscount: appliedCoupon ? cartDiscount : undefined,
         subtotalPrice: parseFloat(cartSubtotal.toFixed(2)),
         totalQuantity,
         totalPrice: parseFloat(cartFinalTotal.toFixed(2)),
@@ -436,8 +371,6 @@ export default function Home() {
           deliveryNotes: deliveryNotes.trim() || undefined,
           cartItems: itemDetails.map(i => ({ name: i.name, quantity: i.quantity, unitPrice: i.unitPrice })),
           subtotal: cartSubtotal,
-          couponCode: appliedCoupon?.coupon.code,
-          couponDiscount: cartDiscount,
           finalTotal: cartFinalTotal
         });
         const waUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(formattedMessage)}`;
@@ -455,10 +388,6 @@ export default function Home() {
       setDeliveryNotes("");
       setPhoneTouched(false);
       setAddressTouched(false);
-      setAppliedCoupon(null);
-      setCouponInput("");
-      setCouponError("");
-      setCouponSuccess("");
       setIsCartOpen(false);
       setIsCheckoutOpen(false);
     } catch (err: unknown) {
@@ -474,19 +403,19 @@ export default function Home() {
       {/* Navigation */}
       <nav className="flex items-center justify-between px-4 py-3.5 md:px-12 md:py-4 glass-light sticky top-0 z-40 backdrop-blur-xl border-b border-amber-500/10">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl overflow-hidden shadow-lg shadow-amber-500/20 border border-amber-500/30 flex-shrink-0 bg-slate-900 flex items-center justify-center">
-            <Image src="/logo.png" alt="ABR Asma Logo" width={44} height={44} className="object-cover w-full h-full" />
+          <div className="w-11 h-11 rounded-2xl overflow-hidden shadow-lg shadow-emerald-500/20 border border-emerald-500/30 flex-shrink-0 bg-slate-900 flex items-center justify-center relative">
+            <Image src="/easy_mart_hero.jpg" alt="Easy Mart Logo" fill className="object-cover" />
           </div>
           <div className="flex flex-col text-left">
-            <span className="text-base md:text-lg font-black tracking-tight text-white leading-none font-heading">ABR ASMA RESTAURANT</span>
-            <span className="text-[10px] uppercase font-extrabold tracking-widest text-amber-400 mt-0.5">Peringathur • Malabar Cuisine</span>
+            <span className="text-base md:text-lg font-black tracking-tight text-white leading-none font-heading">EASY MART SUPERMARKET</span>
+            <span className="text-[10px] uppercase font-extrabold tracking-widest text-emerald-400 mt-0.5">Pallikkuni • Fresh Groceries</span>
           </div>
         </div>
 
         <div className="hidden md:flex items-center gap-8 text-xs font-bold uppercase tracking-widest text-slate-300">
-          <a href="#menu" className="hover:text-amber-400 transition-smooth">Menu</a>
-          <a href="#reviews" className="hover:text-amber-400 transition-smooth">Reviews</a>
-          <a href="#location" className="hover:text-amber-400 transition-smooth">Location</a>
+          <a href="#groceries" className="hover:text-emerald-400 transition-smooth">Groceries</a>
+          <a href="#reviews" className="hover:text-emerald-400 transition-smooth">Reviews</a>
+          <a href="#location" className="hover:text-emerald-400 transition-smooth">Location</a>
           <span className="w-[1px] h-4 bg-slate-800"></span>
         </div>
 
@@ -530,7 +459,7 @@ export default function Home() {
                 const matchedDish = offer.applicableProducts && offer.applicableProducts.length > 0
                   ? menuItems.find(item => offer.applicableProducts.includes(item.id))
                   : menuItems[0];
-                const imageSrc = matchedDish?.image || "/malabar_biriyani.png";
+                const imageSrc = matchedDish?.image || "/easy_mart_hero.jpg";
 
                 return (
                   <div key={offer.id} className="flex flex-col sm:flex-row items-center gap-5 md:gap-7 animate-fadeIn text-left">
@@ -613,23 +542,27 @@ export default function Home() {
           )}
 
           <div ref={heroTextRef} className="flex flex-col items-center">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-black uppercase tracking-wider mb-4 shadow-lg">
+              <span>🛒</span>
+              <span>Express 30-Min Delivery in Pallikkuni</span>
+            </div>
             <h1 className="text-4xl sm:text-5xl md:text-7xl font-black text-white mb-4 md:mb-6 tracking-tight leading-tight slide-up font-heading">
-              Authentic Taste of <br className="hidden md:inline" />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-amber-200 to-yellow-500 glow-text-amber">
-                Malabar Culinary Heritage
+              Fresh Groceries & <br className="hidden md:inline" />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-200 to-amber-300">
+                Daily Essentials
               </span>
             </h1>
 
             <p className="text-sm md:text-lg text-slate-300 max-w-2xl mx-auto mb-9 md:mb-11 fade-in px-2 leading-relaxed font-light">
-              Slow-cooked Thalassery Biriyani, smoked Kuzhimanthi, charred Tandoori grills, and fiery Kerala Beef Fry prepared with traditional spice craft in Peringathur.
+              Farm-fresh vegetables, seasonal fruits, dairy, rice, spices, and everyday household necessities delivered directly to your doorstep in Pallikkuni.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-4 fade-in">
-              <a href="#menu" className="btn-primary text-sm px-8 py-4 uppercase tracking-wider">
-                Explore Our Menu
+              <a href="#groceries" className="btn-primary text-sm px-8 py-4 uppercase tracking-wider">
+                Browse Supermarket
               </a>
               <a href="#location" className="btn-secondary text-sm px-8 py-4 uppercase tracking-wider">
-                Find Restaurant
+                Store Location & Hours
               </a>
             </div>
           </div>
@@ -639,11 +572,11 @@ export default function Home() {
             {[
               {
                 title: "Opening Hours",
-                desc: "9:00 AM – 11:00 PM",
+                desc: "8:00 AM – 10:00 PM",
                 sub: "Monday – Sunday",
                 badge: "Open Daily",
                 badgeBg: "badge-emerald",
-                gradient: "from-amber-500/20 to-emerald-500/20",
+                gradient: "from-emerald-500/20 to-teal-500/20",
                 icon: (
                   <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -652,26 +585,26 @@ export default function Home() {
                 href: undefined,
               },
               {
-                title: "Direct Order Line",
-                desc: "+91 74477 63003",
-                sub: "Instant takeaway & delivery",
-                badge: "Call Direct",
+                title: "Delivery Order Line",
+                desc: "+91 81130 21038",
+                sub: "WhatsApp delivery in Pallikkuni",
+                badge: "WhatsApp / Call",
                 badgeBg: "badge-amber",
-                gradient: "from-amber-500/20 to-yellow-500/20",
+                gradient: "from-emerald-500/20 to-amber-500/20",
                 icon: (
                   <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.94.725l.548 2.2a1 1 0 01-.321.988l-1.305.98a10.582 10.582 0 004.872 4.872l.98-1.305a1 1 0 01.988-.321l2.2.548a1 1 0 01.725.94V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                   </svg>
                 ),
-                href: "tel:+917447763003",
+                href: "tel:+918113021038",
               },
               {
-                title: "Dining Address",
-                desc: "Gurujimukku, Peringathur",
+                title: "Supermarket Address",
+                desc: "Pallikkuni, Peringathur",
                 sub: "Kerala, India 670675",
                 badge: "Google Map",
                 badgeBg: "px-3 py-1 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 text-[11px] font-extrabold uppercase tracking-wider",
-                gradient: "from-sky-500/20 to-amber-500/20",
+                gradient: "from-sky-500/20 to-emerald-500/20",
                 icon: (
                   <svg className="w-5 h-5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
@@ -681,22 +614,22 @@ export default function Home() {
                 href: "#location",
               },
               {
-                title: "Fast Delivery",
-                desc: "Doorstep Delivery",
-                sub: "Peringathur & nearby zones",
-                badge: "Express 35m",
+                title: "Doorstep Delivery",
+                desc: "Home Delivery",
+                sub: "Pallikkuni & nearby areas",
+                badge: "Express 30m",
                 badgeBg: "badge-crimson",
-                gradient: "from-red-500/20 to-amber-500/20",
+                gradient: "from-emerald-500/20 to-teal-500/20",
                 icon: (
-                  <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                 ),
-                href: "#menu",
+                href: "#groceries",
               }
             ].map((info, idx) => {
               const CardContent = (
-                <div className="glass-card rounded-3xl p-5 hover:-translate-y-1 transition-smooth flex flex-col justify-between h-full border border-slate-800/90 hover:border-amber-500/40">
+                <div className="glass-card rounded-3xl p-5 hover:-translate-y-1 transition-smooth flex flex-col justify-between h-full border border-slate-800/90 hover:border-emerald-500/40">
                   <div className="flex items-start justify-between gap-3 mb-4">
                     <div className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${info.gradient} flex items-center justify-center shrink-0 border border-slate-700/60 shadow-inner`}>
                       {info.icon}
@@ -707,7 +640,7 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <h4 className="text-[10px] font-extrabold text-amber-500 uppercase tracking-widest leading-none mb-1.5">
+                    <h4 className="text-[10px] font-extrabold text-emerald-400 uppercase tracking-widest leading-none mb-1.5">
                       {info.title}
                     </h4>
                     <p className="text-base font-black text-white font-heading leading-tight">
@@ -733,30 +666,32 @@ export default function Home() {
       </header>
 
       {/* Menu Section */}
-      <section ref={menuSectionRef} id="menu" className="py-16 md:py-24 px-4 md:px-12 relative z-10 border-t border-slate-800/60">
+      {/* Supermarket Groceries Section */}
+      <section ref={menuSectionRef} id="groceries" className="py-16 md:py-24 px-4 md:px-12 relative z-10 border-t border-slate-800/60">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="section-header-reveal flex flex-col md:flex-row md:items-end justify-between gap-4 md:gap-6 mb-10 md:mb-14">
             <div className="text-left">
-              <span className="badge-amber mb-2 inline-block">Chef&apos;s Recommendations</span>
-              <h2 className="text-3xl md:text-4xl font-black text-white font-heading">Culinary Delicacies</h2>
-              <p className="text-sm text-slate-400 mt-2 font-light">Freshly cooked to order with traditional spices and pure ghee.</p>
+              <span className="badge-emerald mb-2 inline-block">Fresh Daily Arrivals</span>
+              <h2 className="text-3xl md:text-4xl font-black text-white font-heading">Supermarket Departments</h2>
+              <p className="text-sm text-slate-400 mt-2 font-light">Farm fresh vegetables, dairy, pantry staples, and daily home essentials at direct supermarket prices.</p>
             </div>
             {/* Filters */}
             <div className="flex items-center gap-2.5 overflow-x-auto pb-2 scrollbar-none">
               {[
-                { id: "all", label: "Full Menu" },
-                { id: "biriyani", label: "Mandi & Biriyani" },
-                { id: "mains", label: "Mains & Grills" },
-                { id: "breads", label: "Breads & Curries" },
-                { id: "beverages", label: "Beverages" }
+                { id: "all", label: "All Items" },
+                { id: "fruits-vegetables", label: "🥦 Fruits & Veggies" },
+                { id: "dairy-bakery", label: "🥛 Dairy & Bread" },
+                { id: "groceries-staples", label: "🌾 Rice & Staples" },
+                { id: "snacks-beverages", label: "🍪 Snacks & Drinks" },
+                { id: "household-essentials", label: "🧼 Home Essentials" }
               ].map((category) => (
                 <button
                   key={category.id}
                   onClick={() => setActiveCategory(category.id)}
                   className={`px-4 py-2.5 rounded-2xl text-xs font-black whitespace-nowrap transition-smooth uppercase tracking-wider border ${activeCategory === category.id
-                      ? "bg-gradient-to-r from-amber-600 to-amber-500 text-slate-950 border-amber-400/50 shadow-lg shadow-amber-500/25"
-                      : "glass text-slate-300 hover:text-white hover:border-amber-500/30"
+                      ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white border-emerald-400/50 shadow-lg shadow-emerald-500/25"
+                      : "glass text-slate-300 hover:text-white hover:border-emerald-500/30"
                     }`}
                 >
                   {category.label}
@@ -772,7 +707,7 @@ export default function Home() {
               return (
                 <div
                   key={dish.id}
-                  className="food-card-reveal glass-card rounded-3xl overflow-hidden hover:scale-[1.02] transition-smooth group flex flex-col border border-slate-800/80 hover:border-amber-500/40 shadow-2xl"
+                  className="food-card-reveal glass-card rounded-3xl overflow-hidden hover:scale-[1.02] transition-smooth group flex flex-col border border-slate-800/80 hover:border-emerald-500/40 shadow-2xl"
                 >
                   {/* Image Container */}
                   <div className="h-48 md:h-56 relative w-full overflow-hidden bg-slate-950 flex items-center justify-center border-b border-slate-800/60">
@@ -790,12 +725,12 @@ export default function Home() {
                       )
                     ) : (
                       <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-6 text-center">
-                        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-400 mb-2 border border-amber-500/20 shadow-inner">
+                        <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 mb-2 border border-emerald-500/20 shadow-inner">
                           <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
                           </svg>
                         </div>
-                        <span className="text-[10px] text-amber-500/70 uppercase tracking-widest font-extrabold">ABR Asma Specialties</span>
+                        <span className="text-[10px] text-emerald-400/80 uppercase tracking-widest font-extrabold">Easy Mart Fresh</span>
                       </div>
                     )}
                     {/* Category Tag */}
@@ -856,15 +791,14 @@ export default function Home() {
           <div className="lg:col-span-7 flex flex-col text-left">
             <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
               <div>
-                <span className="badge-amber mb-2 inline-block">Guest Feedback</span>
-                <h2 className="text-3xl font-black text-white font-heading">Google Guest Reviews</h2>
+                <span className="badge-emerald mb-2 inline-block">Customer Feedback</span>
+                <h2 className="text-3xl font-black text-white font-heading">Google Verified Reviews</h2>
                 <div className="flex items-center gap-2 mt-2">
-                  <span className="text-sm font-black text-amber-400">3.7 out of 5 stars</span>
+                  <span className="text-sm font-black text-emerald-400">4.8 out of 5 stars</span>
                   <div className="flex items-center text-amber-400 gap-0.5">
-                    {Array.from({ length: 4 }).map((_, i) => (
+                    {Array.from({ length: 5 }).map((_, i) => (
                       <span key={i}><Star className="w-4 h-4" weight="fill" /></span>
                     ))}
-                    <span className="text-slate-700"><Star className="w-4 h-4" weight="fill" /></span>
                   </div>
                   <span className="text-xs text-slate-400 font-medium">({INITIAL_REVIEWS.length} reviews)</span>
                 </div>
@@ -892,7 +826,7 @@ export default function Home() {
                   <div className="flex justify-between items-center">
                     <div>
                       <span className="font-black text-base text-white font-heading">{rev.author}</span>
-                      <span className="text-[10px] text-amber-500/80 ml-2 font-bold uppercase tracking-wider">{rev.date}</span>
+                      <span className="text-[10px] text-emerald-400/80 ml-2 font-bold uppercase tracking-wider">{rev.date}</span>
                     </div>
                     <div className="flex items-center text-amber-400 text-xs">
                       {Array.from({ length: 5 }).map((_, i) => (
@@ -913,8 +847,8 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-10 text-center text-slate-400 border-t border-slate-800/60 text-xs px-4">
-        <p className="mb-2 font-medium">ABR Asma Restaurant &copy; {new Date().getFullYear()} – Traditional Taste of Malabar.</p>
-        <p className="text-slate-500">Gurujimukku, Peringathur, Kerala 670675 • Phone: +91 74477 63003</p>
+        <p className="mb-2 font-medium">Easy Mart Supermarket &copy; {new Date().getFullYear()} – Quality Freshness Daily.</p>
+        <p className="text-slate-500">Pallikkuni, Peringathur, Kerala 670675 • Delivery Phone: +91 81130 21038</p>
       </footer>
 
 
@@ -1011,51 +945,11 @@ export default function Home() {
             {/* Proceed to Checkout Button */}
             {cart.length > 0 && (
               <div className="border-t border-slate-800/80 pt-4 mt-6">
-                {/* Coupon Section */}
-                <div className="mb-4">
-                  <label className="block text-[10px] font-extrabold text-amber-500 uppercase tracking-widest mb-1.5">Have a Promo Coupon?</label>
-                  {appliedCoupon ? (
-                    <div className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-                      <div className="flex items-center gap-2">
-                        <span className="text-base">🎟️</span>
-                        <div>
-                          <span className="font-black text-xs text-amber-400 font-mono">{appliedCoupon.coupon.code}</span>
-                          <p className="text-[10px] text-emerald-400 font-extrabold">Saved ₹{appliedCoupon.discountAmount.toFixed(2)}</p>
-                        </div>
-                      </div>
-                      <button onClick={handleRemoveCoupon} className="text-xs text-slate-400 hover:text-red-400 px-2 py-1 rounded-lg hover:bg-red-500/10 transition-smooth">
-                        Remove
-                      </button>
-                    </div>
-                  ) : (
-                    <form onSubmit={handleApplyCoupon} className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="PROMO CODE"
-                        value={couponInput}
-                        onChange={e => setCouponInput(e.target.value.toUpperCase())}
-                        className="px-3.5 py-2.5 text-xs font-mono tracking-wider uppercase flex-1 bg-slate-950 border border-slate-800 rounded-xl text-white focus:border-amber-500"
-                      />
-                      <button type="submit" className="px-4 py-2.5 bg-amber-500 text-slate-950 font-black rounded-xl text-xs hover:bg-amber-400 transition-smooth">
-                        Apply
-                      </button>
-                    </form>
-                  )}
-                  {couponError && <p className="text-[10px] text-red-400 mt-1.5 font-bold">{couponError}</p>}
-                  {couponSuccess && <p className="text-[10px] text-emerald-400 mt-1.5 font-bold">{couponSuccess}</p>}
-                </div>
-
-                <div className="space-y-2 mb-5 border-t border-slate-800/80 pt-4">
+                <div className="space-y-2 mb-5">
                   <div className="flex justify-between items-center text-xs text-slate-400">
                     <span>Subtotal</span>
                     <span className="font-bold">₹{cartSubtotal.toFixed(2)}</span>
                   </div>
-                  {appliedCoupon && (
-                    <div className="flex justify-between items-center text-xs text-emerald-400 font-bold">
-                      <span>Coupon Discount</span>
-                      <span>-₹{appliedCoupon.discountAmount.toFixed(2)}</span>
-                    </div>
-                  )}
                   <div className="flex justify-between items-center text-lg font-black text-white pt-2.5 border-t border-slate-800 font-heading">
                     <span>Total Bill</span>
                     <span className="text-amber-400">₹{cartFinalTotal.toFixed(2)}</span>
@@ -1090,8 +984,8 @@ export default function Home() {
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="text-2xl font-black text-white mb-1 font-heading">Complete Order Details</h3>
-            <p className="text-xs text-slate-400 mb-6">Enter details to dispatch via WhatsApp to ABR Asma counter</p>
+            <h3 className="text-2xl font-black text-white mb-1 font-heading">Complete Grocery Order</h3>
+            <p className="text-xs text-slate-400 mb-6">Enter details to dispatch via WhatsApp directly to Easy Mart Supermarket</p>
 
             {/* Order Summary */}
             <div className="glass rounded-2xl p-4 mb-6 border border-slate-800 max-h-56 overflow-y-auto">
@@ -1109,12 +1003,7 @@ export default function Home() {
                   <span>Subtotal</span>
                   <span>₹{cartSubtotal.toFixed(2)}</span>
                 </div>
-                {appliedCoupon && (
-                  <div className="flex justify-between items-center text-xs text-green-400 font-semibold">
-                    <span>Coupon ({appliedCoupon.coupon.code})</span>
-                    <span>-₹{appliedCoupon.discountAmount.toFixed(2)}</span>
-                  </div>
-                )}
+
                 <div className="flex justify-between items-center pt-2 border-t border-slate-800">
                   <span className="text-sm font-bold text-white">Total</span>
                   <span className="text-lg font-extrabold text-amber-500">₹{cartFinalTotal.toFixed(2)}</span>
@@ -1299,9 +1188,9 @@ export default function Home() {
 
             <button
               onClick={() => setOrderPlaced(false)}
-              className="w-full btn-primary py-4 bg-gradient-to-tr from-amber-600 to-amber-500 text-slate-950 font-bold border-transparent"
+              className="w-full btn-primary py-4 bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold border-transparent shadow-lg shadow-emerald-600/30"
             >
-              Explore More Dishes
+              Continue Shopping Groceries
             </button>
           </div>
         </div>
@@ -1310,11 +1199,11 @@ export default function Home() {
       {/* Floating WhatsApp & Call Buttons */}
       <div className={`fixed ${cart.length > 0 && !isCartOpen ? "bottom-24" : "bottom-6"} right-6 z-40 flex flex-col gap-3 group transition-all duration-300`}>
         <a
-          href="https://wa.me/918113021038?text=Hi%20ABR%20Asma%20Restaurant%2C%20I%20would%20like%20to%20know%20more%20about%20your%20menu."
+          href="https://wa.me/918113021038?text=Hi%20Easy%20Mart%20Supermarket%2C%20I%20would%20like%20to%20order%20groceries."
           target="_blank"
           rel="noopener noreferrer"
           className="fab-whatsapp"
-          title="Chat on WhatsApp (+91 8113021038)"
+          title="Chat on WhatsApp (+91 81130 21038)"
           aria-label="Contact on WhatsApp"
         >
           <svg className="w-6 h-6 md:w-7 md:h-7 fill-current" viewBox="0 0 24 24">
@@ -1325,8 +1214,8 @@ export default function Home() {
         <a
           href="tel:+918113021038"
           className="fab-call"
-          title="Call (+91 8113021038)"
-          aria-label="Call Restaurant"
+          title="Call (+91 81130 21038)"
+          aria-label="Call Supermarket"
         >
           <svg className="w-6 h-6 md:w-7 md:h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-1.021 1.361c-3.14-1.282-5.67-3.812-6.952-6.952l1.361-1.021c.362-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />

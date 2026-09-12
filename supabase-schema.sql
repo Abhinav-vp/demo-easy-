@@ -47,19 +47,6 @@ CREATE TABLE IF NOT EXISTS public.offers (
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- 4. COUPONS TABLE
-CREATE TABLE IF NOT EXISTS public.coupons (
-    id TEXT PRIMARY KEY,
-    code TEXT UNIQUE NOT NULL,
-    description TEXT DEFAULT '',
-    discount_type TEXT NOT NULL CHECK (discount_type IN ('percentage', 'flat')),
-    discount_value NUMERIC(10, 2) NOT NULL,
-    min_order_amount NUMERIC(10, 2),
-    max_discount_amount NUMERIC(10, 2),
-    active BOOLEAN DEFAULT true NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
 -- ==============================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ==============================================================================
@@ -67,17 +54,13 @@ CREATE TABLE IF NOT EXISTS public.coupons (
 ALTER TABLE public.menu_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.enquiries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.offers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.coupons ENABLE ROW LEVEL SECURITY;
 
--- Allow public read access to active menu items, offers, and coupons
+-- Allow public read access to active menu items and offers
 DROP POLICY IF EXISTS "Public can view menu items" ON public.menu_items;
 CREATE POLICY "Public can view menu items" ON public.menu_items FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Public can view offers" ON public.offers;
 CREATE POLICY "Public can view offers" ON public.offers FOR SELECT USING (true);
-
-DROP POLICY IF EXISTS "Public can view coupons" ON public.coupons;
-CREATE POLICY "Public can view coupons" ON public.coupons FOR SELECT USING (true);
 
 -- Allow public insert to enquiries (storefront checkout)
 DROP POLICY IF EXISTS "Anyone can create enquiry" ON public.enquiries;
@@ -93,9 +76,6 @@ CREATE POLICY "Full access for enquiries" ON public.enquiries FOR ALL USING (tru
 DROP POLICY IF EXISTS "Full access for offers" ON public.offers;
 CREATE POLICY "Full access for offers" ON public.offers FOR ALL USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Full access for coupons" ON public.coupons;
-CREATE POLICY "Full access for coupons" ON public.coupons FOR ALL USING (true) WITH CHECK (true);
-
 -- ==============================================================================
 -- SUPABASE REALTIME CONFIGURATION
 -- ==============================================================================
@@ -104,7 +84,7 @@ CREATE POLICY "Full access for coupons" ON public.coupons FOR ALL USING (true) W
 ALTER PUBLICATION supabase_realtime ADD TABLE public.enquiries;
 
 -- ==============================================================================
--- INITIAL SEED DATA (Default Menu Items & Coupons)
+-- INITIAL SEED DATA (Default Menu Items)
 -- ==============================================================================
 
 INSERT INTO public.menu_items (id, name, category, price, description, image) VALUES
@@ -118,8 +98,3 @@ INSERT INTO public.menu_items (id, name, category, price, description, image) VA
 ('abr-8', 'Fresh Mint Lime Juice', 'beverages', 1.99, 'Invigorating muddled fresh mint leaves, squeezed lime, and chilled club soda.', NULL),
 ('abr-9', 'Sulaimani Cardamom Tea', 'beverages', 0.99, 'Traditional sweet black tea brewed with cloves, crushed green cardamoms, and a dash of lime juice.', NULL)
 ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO public.coupons (id, code, description, discount_type, discount_value, min_order_amount, max_discount_amount, active) VALUES
-('coupon-1', 'WELCOME10', '10% OFF on all orders', 'percentage', 10, 5, 15, true),
-('coupon-2', 'ASMAPRO', 'Flat ₹2 OFF on minimum order ₹10', 'flat', 2, 10, NULL, true)
-ON CONFLICT (code) DO NOTHING;

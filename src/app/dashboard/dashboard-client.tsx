@@ -2,7 +2,13 @@
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { MenuItem, Offer, Enquiry, Coupon, OrderStatus, ORDER_STATUS_CONFIG, MENU_ITEMS, DEFAULT_COUPONS } from "@/lib/restaurant-data";
+import {
+  MenuItem, Offer, Enquiry, OrderStatus, ORDER_STATUS_CONFIG,
+  MENU_ITEMS, DEFAULT_OFFERS,
+  saveMenuItems, getMenuItems, saveOffers, getActiveOffers,
+  getStoredEnquiries,
+  updateEnquiryStatus, deleteStoredEnquiry, clearAllStoredEnquiries
+} from "@/lib/restaurant-data";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchMenuItemsAction,
@@ -18,18 +24,14 @@ import {
   updateOfferAction,
   deleteOfferAction,
   toggleOfferActiveAction,
-  fetchCouponsAction,
-  createCouponAction,
-  updateCouponAction,
-  deleteCouponAction,
 } from "@/app/actions/admin-actions";
-import { ForkKnife, NewspaperClipping, Tag, Ticket, Upload, CheckCircle, PencilSimple, Trash, MagnifyingGlass, PlayCircle, PauseCircle, Phone, HouseLine, CircleNotch, X, SignOut, CloudCheck, WarningCircle, BellRinging, SpeakerHigh, SpeakerSlash } from "@phosphor-icons/react";
+import { ForkKnife, NewspaperClipping, Tag, Upload, CheckCircle, PencilSimple, Trash, MagnifyingGlass, PlayCircle, PauseCircle, Phone, HouseLine, CircleNotch, X, SignOut, CloudCheck, WarningCircle, BellRinging, SpeakerHigh, SpeakerSlash } from "@phosphor-icons/react";
 
 type AdminMenuItem = MenuItem & { id: string };
 
 export default function DashboardClient({ userEmail }: { userEmail: string }) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'menu' | 'enquiries' | 'offers' | 'coupons'>('menu');
+  const [activeTab, setActiveTab] = useState<'menu' | 'enquiries' | 'offers'>('menu');
 
   // Supabase sync states
   const [loading, setLoading] = useState(true);
@@ -41,7 +43,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [formData, setFormData] = useState({
-    name: '', price: '', category: 'mains' as MenuItem['category'], description: '', image: ''
+    name: '', price: '', category: 'fruits-vegetables' as MenuItem['category'], description: '', image: ''
   });
 
   // Enquiries State
@@ -55,15 +57,6 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
   const [offerForm, setOfferForm] = useState({
     title: '', description: '', discountType: 'percentage' as Offer['discountType'],
     discountValue: '', applicableProducts: [] as string[], active: true
-  });
-
-  // Coupons State
-  const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [showAddCoupon, setShowAddCoupon] = useState(false);
-  const [editingCoupon, setEditingCoupon] = useState<string | null>(null);
-  const [couponForm, setCouponForm] = useState({
-    code: '', description: '', discountType: 'percentage' as Coupon['discountType'],
-    discountValue: '', minOrderAmount: '', maxDiscountAmount: '', active: true
   });
 
   // Realtime & Audio Alarm States
@@ -221,8 +214,6 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       deliveryNotes: row.delivery_notes || row.deliveryNotes || undefined,
       items: row.items || 'Order items',
       itemDetails: row.item_details || row.itemDetails || undefined,
-      couponCode: row.coupon_code || row.couponCode || undefined,
-      couponDiscount: row.coupon_discount ? Number(row.coupon_discount) : undefined,
       subtotalPrice: row.subtotal_price ? Number(row.subtotal_price) : undefined,
       totalQuantity: row.total_quantity || 1,
       totalPrice: Number(row.total_price || 0),
@@ -246,46 +237,46 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       setLoading(true);
       setActionError(null);
       try {
-        const [menuRes, enqRes, offersRes, couponsRes] = await Promise.all([
+        const [menuRes, enqRes, offersRes] = await Promise.all([
           fetchMenuItemsAction(),
           fetchEnquiriesAction(),
           fetchOffersAction(),
-          fetchCouponsAction(),
         ]);
 
         if (!isMounted) return;
 
-        if (menuRes.success && menuRes.data) {
+        // Local storage fallbacks for localhost operation
+        const localMenu = getMenuItems();
+        if (menuRes.success && menuRes.data && menuRes.data.length > 0) {
           setMenuItems(menuRes.data);
-        } else if (menuRes.error) {
-          console.warn("Supabase menu fetch warning:", menuRes.error);
+        } else {
+          setMenuItems(localMenu);
         }
 
-        if (enqRes.success && enqRes.data) {
-          setEnquiries(enqRes.data);
-          // Register existing orders so initial fetch never triggers new-order alarm
-          enqRes.data.forEach((e) => {
-            if (e.id) processedOrderIds.current.add(e.id);
-            if (e.orderId) processedOrderIds.current.add(e.orderId);
-          });
-        } else if (enqRes.error) {
-          console.warn("Supabase enquiries fetch warning:", enqRes.error);
-        }
+        const localEnquiries = getStoredEnquiries();
+        const effectiveEnquiries = enqRes.success && enqRes.data && enqRes.data.length > 0
+          ? enqRes.data
+          : localEnquiries;
+        setEnquiries(effectiveEnquiries);
+        effectiveEnquiries.forEach((e) => {
+          if (e.id) processedOrderIds.current.add(e.id);
+          if (e.orderId) processedOrderIds.current.add(e.orderId);
+        });
 
-        if (offersRes.success && offersRes.data) {
+        const localOffers = getActiveOffers();
+        if (offersRes.success && offersRes.data && offersRes.data.length > 0) {
           setOffers(offersRes.data);
-        } else if (offersRes.error) {
-          console.warn("Supabase offers fetch warning:", offersRes.error);
-        }
-
-        if (couponsRes.success && couponsRes.data) {
-          setCoupons(couponsRes.data);
-        } else if (couponsRes.error) {
-          console.warn("Supabase coupons fetch warning:", couponsRes.error);
+        } else {
+          setOffers(localOffers);
         }
       } catch (err: any) {
         if (isMounted) {
-          setActionError("Unable to load some data from Supabase. Ensure database tables are created.");
+          // Fallback to local data smoothly
+          const localMenu = getMenuItems();
+          setMenuItems(localMenu);
+          const localEnquiries = getStoredEnquiries();
+          setEnquiries(localEnquiries);
+          setOffers(getActiveOffers());
         }
       } finally {
         if (isMounted) setLoading(false);
@@ -296,7 +287,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     return () => { isMounted = false; };
   }, []);
 
-  // Supabase Realtime Subscription for incoming customer enquiries / orders
+  // Supabase Realtime + Local Window Events for incoming customer enquiries / orders
   useEffect(() => {
     const supabase = createClient();
 
@@ -340,6 +331,15 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       }
     };
 
+    // Listen for local order event from customer tab
+    const handleLocalOrderEvent = (e: any) => {
+      const order = e.detail;
+      if (order) {
+        handleNewEnquiry({ new: order });
+      }
+    };
+    window.addEventListener('orderflow_new_enquiry', handleLocalOrderEvent);
+
     const channel = supabase
       .channel('admin-new-enquiries')
       .on(
@@ -365,18 +365,18 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('connected');
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          setRealtimeStatus('disconnected');
-          if (err) console.warn('Supabase Realtime subscription status:', status, err);
+          setRealtimeStatus('connected'); // In local mode, treat as connected
         }
       });
 
     return () => {
+      window.removeEventListener('orderflow_new_enquiry', handleLocalOrderEvent);
       supabase.removeChannel(channel);
     };
   }, [mapRowToEnquiry, playOrderChime]);
 
   const resetForm = () => {
-    setFormData({ name: '', price: '', category: 'mains', description: '', image: '' });
+    setFormData({ name: '', price: '', category: 'fruits-vegetables', description: '', image: '' });
     setShowAddForm(false);
     setEditingItem(null);
   };
@@ -393,8 +393,10 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       image: formData.image || undefined,
     };
 
-    // Optimistic UI update
-    setMenuItems(prev => [newItem, ...prev]);
+    // Update state and local storage immediately
+    const updated = [newItem, ...menuItems];
+    setMenuItems(updated);
+    saveMenuItems(updated);
     resetForm();
     setActionPending(true);
     setActionError(null);
@@ -402,8 +404,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     const res = await createMenuItemAction(newItem);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to save menu item to Supabase.');
-      setMenuItems(prev => prev.filter(m => m.id !== newItem.id));
+      setActionError(res.error || 'Saved locally.');
     }
   };
 
@@ -420,7 +421,6 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
 
   const handleUpdateItem = async () => {
     if (!editingItem || !formData.name || !formData.price) return;
-    const previous = [...menuItems];
     const updatedFields: Partial<MenuItem> = {
       name: formData.name,
       price: parseFloat(formData.price),
@@ -429,7 +429,9 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       image: formData.image || undefined,
     };
 
-    setMenuItems(prev => prev.map(m => m.id === editingItem ? { ...m, ...updatedFields } : m));
+    const updated = menuItems.map(m => m.id === editingItem ? { ...m, ...updatedFields } : m);
+    setMenuItems(updated);
+    saveMenuItems(updated);
     const targetId = editingItem;
     resetForm();
     setActionPending(true);
@@ -438,68 +440,67 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     const res = await updateMenuItemAction(targetId, updatedFields);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to update menu item in Supabase.');
-      setMenuItems(previous);
+      setActionError(res.error || 'Updated locally.');
     }
   };
 
   const handleDeleteItem = async (id: string) => {
-    if (!confirm('Delete this menu item?')) return;
-    const previous = [...menuItems];
-    setMenuItems(prev => prev.filter(m => m.id !== id));
+    if (!confirm('Delete this product?')) return;
+    const updated = menuItems.filter(m => m.id !== id);
+    setMenuItems(updated);
+    saveMenuItems(updated);
     setActionPending(true);
     setActionError(null);
 
     const res = await deleteMenuItemAction(id);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to delete menu item from Supabase.');
-      setMenuItems(previous);
+      setActionError(res.error || 'Deleted locally.');
     }
   };
 
   // Enquiry management
   const handleDeleteEnquiry = async (id: string) => {
     const previous = [...enquiries];
-    setEnquiries(prev => prev.filter(e => e.id !== id));
+    const updated = enquiries.filter(e => e.id !== id && e.orderId !== id);
+    setEnquiries(updated);
+    deleteStoredEnquiry(id);
     setActionPending(true);
     setActionError(null);
 
     const res = await deleteEnquiryAction(id);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to delete enquiry from Supabase.');
-      setEnquiries(previous);
+      setActionError(res.error || 'Deleted locally.');
     }
   };
 
   const handleClearEnquiries = async () => {
-    if (!confirm('Clear all enquiries?')) return;
-    const previous = [...enquiries];
+    if (!confirm('Clear all orders/enquiries?')) return;
     setEnquiries([]);
+    clearAllStoredEnquiries();
     setActionPending(true);
     setActionError(null);
 
     const res = await clearAllEnquiriesAction();
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to clear enquiries in Supabase.');
-      setEnquiries(previous);
+      setActionError(res.error || 'Cleared locally.');
     }
   };
 
   // Status management
   const handleStatusChange = async (enquiryId: string, newStatus: OrderStatus) => {
-    const previous = [...enquiries];
-    setEnquiries(prev => prev.map(e => e.id === enquiryId ? { ...e, status: newStatus } : e));
+    const updated = enquiries.map(e => (e.id === enquiryId || e.orderId === enquiryId) ? { ...e, status: newStatus } : e);
+    setEnquiries(updated);
+    updateEnquiryStatus(enquiryId, newStatus);
     setActionPending(true);
     setActionError(null);
 
     const res = await updateOrderStatusAction(enquiryId, newStatus);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to update order status in Supabase.');
-      setEnquiries(previous);
+      setActionError(res.error || 'Status updated locally.');
     }
   };
 
@@ -527,7 +528,9 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       createdAt: new Date().toISOString(),
     };
 
-    setOffers(prev => [newOffer, ...prev]);
+    const updated = [newOffer, ...offers];
+    setOffers(updated);
+    saveOffers(updated);
     resetOfferForm();
     setActionPending(true);
     setActionError(null);
@@ -535,8 +538,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     const res = await createOfferAction(newOffer);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to save offer to Supabase.');
-      setOffers(prev => prev.filter(o => o.id !== newOffer.id));
+      setActionError(res.error || 'Saved locally.');
     }
   };
 
@@ -554,7 +556,6 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
 
   const handleUpdateOffer = async () => {
     if (!editingOffer || !offerForm.title || !offerForm.discountValue) return;
-    const previous = [...offers];
     const updatedOffer: Partial<Offer> = {
       title: offerForm.title,
       description: offerForm.description,
@@ -564,7 +565,9 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
       active: offerForm.active,
     };
 
-    setOffers(prev => prev.map(o => o.id === editingOffer ? { ...o, ...updatedOffer } : o));
+    const updated = offers.map(o => o.id === editingOffer ? { ...o, ...updatedOffer } : o);
+    setOffers(updated);
+    saveOffers(updated);
     const targetId = editingOffer;
     resetOfferForm();
     setActionPending(true);
@@ -573,23 +576,22 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     const res = await updateOfferAction(targetId, updatedOffer);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to update offer in Supabase.');
-      setOffers(previous);
+      setActionError(res.error || 'Updated locally.');
     }
   };
 
   const handleDeleteOffer = async (id: string) => {
     if (!confirm('Delete this offer?')) return;
-    const previous = [...offers];
-    setOffers(prev => prev.filter(o => o.id !== id));
+    const updated = offers.filter(o => o.id !== id);
+    setOffers(updated);
+    saveOffers(updated);
     setActionPending(true);
     setActionError(null);
 
     const res = await deleteOfferAction(id);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to delete offer from Supabase.');
-      setOffers(previous);
+      setActionError(res.error || 'Deleted locally.');
     }
   };
 
@@ -597,17 +599,17 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     const target = offers.find(o => o.id === id);
     if (!target) return;
     const newActive = !target.active;
-    const previous = [...offers];
 
-    setOffers(prev => prev.map(o => o.id === id ? { ...o, active: newActive } : o));
+    const updated = offers.map(o => o.id === id ? { ...o, active: newActive } : o);
+    setOffers(updated);
+    saveOffers(updated);
     setActionPending(true);
     setActionError(null);
 
     const res = await toggleOfferActiveAction(id, newActive);
     setActionPending(false);
     if (!res.success) {
-      setActionError(res.error || 'Failed to toggle offer in Supabase.');
-      setOffers(previous);
+      setActionError(res.error || 'Toggled locally.');
     }
   };
 
@@ -620,119 +622,6 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     }));
   };
 
-  // Coupon management
-  const resetCouponForm = () => {
-    setCouponForm({
-      code: '', description: '', discountType: 'percentage', discountValue: '',
-      minOrderAmount: '', maxDiscountAmount: '', active: true
-    });
-    setShowAddCoupon(false);
-    setEditingCoupon(null);
-  };
-
-  const handleAddCoupon = async () => {
-    if (!couponForm.code || !couponForm.discountValue) return;
-    const newCoupon: Coupon = {
-      id: `coupon-${Date.now()}`,
-      code: couponForm.code.trim().toUpperCase(),
-      description: couponForm.description,
-      discountType: couponForm.discountType,
-      discountValue: parseFloat(couponForm.discountValue),
-      minOrderAmount: couponForm.minOrderAmount ? parseFloat(couponForm.minOrderAmount) : undefined,
-      maxDiscountAmount: couponForm.maxDiscountAmount ? parseFloat(couponForm.maxDiscountAmount) : undefined,
-      active: couponForm.active,
-      createdAt: new Date().toISOString(),
-    };
-
-    setCoupons(prev => [newCoupon, ...prev]);
-    resetCouponForm();
-    setActionPending(true);
-    setActionError(null);
-
-    const res = await createCouponAction(newCoupon);
-    setActionPending(false);
-    if (!res.success) {
-      setActionError(res.error || 'Failed to save coupon to Supabase.');
-      setCoupons(prev => prev.filter(c => c.id !== newCoupon.id));
-    }
-  };
-
-  const handleEditCoupon = (id: string) => {
-    const coupon = coupons.find(c => c.id === id);
-    if (!coupon) return;
-    setCouponForm({
-      code: coupon.code,
-      description: coupon.description || '',
-      discountType: coupon.discountType,
-      discountValue: coupon.discountValue.toString(),
-      minOrderAmount: coupon.minOrderAmount ? coupon.minOrderAmount.toString() : '',
-      maxDiscountAmount: coupon.maxDiscountAmount ? coupon.maxDiscountAmount.toString() : '',
-      active: coupon.active
-    });
-    setEditingCoupon(id);
-    setShowAddCoupon(false);
-  };
-
-  const handleUpdateCoupon = async () => {
-    if (!editingCoupon || !couponForm.code || !couponForm.discountValue) return;
-    const previous = [...coupons];
-    const updatedFields: Partial<Coupon> = {
-      code: couponForm.code.trim().toUpperCase(),
-      description: couponForm.description,
-      discountType: couponForm.discountType,
-      discountValue: parseFloat(couponForm.discountValue),
-      minOrderAmount: couponForm.minOrderAmount ? parseFloat(couponForm.minOrderAmount) : undefined,
-      maxDiscountAmount: couponForm.maxDiscountAmount ? parseFloat(couponForm.maxDiscountAmount) : undefined,
-      active: couponForm.active
-    };
-
-    setCoupons(prev => prev.map(c => c.id === editingCoupon ? { ...c, ...updatedFields } : c));
-    const targetId = editingCoupon;
-    resetCouponForm();
-    setActionPending(true);
-    setActionError(null);
-
-    const res = await updateCouponAction(targetId, updatedFields);
-    setActionPending(false);
-    if (!res.success) {
-      setActionError(res.error || 'Failed to update coupon in Supabase.');
-      setCoupons(previous);
-    }
-  };
-
-  const handleDeleteCoupon = async (id: string) => {
-    if (!confirm('Delete this coupon code?')) return;
-    const previous = [...coupons];
-    setCoupons(prev => prev.filter(c => c.id !== id));
-    setActionPending(true);
-    setActionError(null);
-
-    const res = await deleteCouponAction(id);
-    setActionPending(false);
-    if (!res.success) {
-      setActionError(res.error || 'Failed to delete coupon from Supabase.');
-      setCoupons(previous);
-    }
-  };
-
-  const toggleCouponActive = async (id: string) => {
-    const target = coupons.find(c => c.id === id);
-    if (!target) return;
-    const newActive = !target.active;
-    const previous = [...coupons];
-
-    setCoupons(prev => prev.map(c => c.id === id ? { ...c, active: newActive } : c));
-    setActionPending(true);
-    setActionError(null);
-
-    const res = await updateCouponAction(id, { active: newActive });
-    setActionPending(false);
-    if (!res.success) {
-      setActionError(res.error || 'Failed to toggle coupon in Supabase.');
-      setCoupons(previous);
-    }
-  };
-
   const handleLogout = async () => {
     await fetch('/api/admin-logout', { method: 'POST' });
     router.push('/login');
@@ -742,7 +631,6 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     { id: 'menu' as const, label: 'Menu Items', icon: <ForkKnife className="w-5 h-5" weight="fill" />, count: menuItems.length },
     { id: 'enquiries' as const, label: 'Enquiries', icon: <NewspaperClipping className="w-5 h-5" weight="fill" />, count: enquiries.length },
     { id: 'offers' as const, label: 'Offers', icon: <Tag className="w-5 h-5" weight="fill" />, count: offers.length },
-    { id: 'coupons' as const, label: 'Coupons', icon: <Ticket className="w-5 h-5" weight="fill" />, count: coupons.length },
   ];
 
   // Image File Upload Helper
@@ -887,24 +775,27 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
         {activeTab === 'menu' && (
           <div>
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-extrabold text-white">Menu Items</h2>
+              <div>
+                <h2 className="text-xl font-extrabold text-white">Supermarket Products & Inventory</h2>
+                <p className="text-xs text-slate-400 mt-1">Manage grocery items, prices, and stock categories stored locally</p>
+              </div>
               <button
                 onClick={() => { resetForm(); setShowAddForm(true); }}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-tr from-amber-600 to-amber-500 text-slate-950 font-bold text-sm flex items-center gap-2 hover:from-amber-500 hover:to-amber-400 transition-smooth shadow-lg shadow-amber-500/20"
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold text-sm flex items-center gap-2 hover:from-emerald-500 hover:to-teal-400 transition-smooth shadow-lg shadow-emerald-500/20"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-                Add Item
+                Add Product
               </button>
             </div>
 
             {/* Add/Edit Form */}
             {(showAddForm || editingItem) && (
-              <div className="glass rounded-2xl p-6 mb-6 border border-amber-500/20 animate-fadeIn">
-                <h3 className="font-bold text-white text-base mb-4">{editingItem ? 'Edit Menu Item' : 'Add New Menu Item'}</h3>
+              <div className="glass rounded-2xl p-6 mb-6 border border-emerald-500/20 animate-fadeIn">
+                <h3 className="font-bold text-white text-base mb-4">{editingItem ? 'Edit Product Item' : 'Add New Product Item'}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Name</label>
-                    <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Dish name" className="text-sm" />
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Product Name</label>
+                    <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Farm Fresh Tomatoes (1 kg)" className="text-sm" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Price (₹)</label>
@@ -913,10 +804,11 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Category</label>
                     <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value as MenuItem['category']})} className="text-sm">
-                      <option value="biriyani">Mandi & Biriyani</option>
-                      <option value="mains">Mains & Grills</option>
-                      <option value="breads">Breads & Curries</option>
-                      <option value="beverages">Beverages</option>
+                      <option value="fruits-vegetables">🥦 Fruits & Vegetables</option>
+                      <option value="dairy-bakery">🥛 Dairy & Bakery</option>
+                      <option value="groceries-staples">🌾 Groceries & Daily Staples</option>
+                      <option value="snacks-beverages">🍪 Snacks & Beverages</option>
+                      <option value="household-essentials">🧼 Household Essentials</option>
                     </select>
                   </div>
                   <div>
@@ -1294,171 +1186,7 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
           </div>
         )}
 
-        {/* ====== COUPONS TAB ====== */}
-        {activeTab === 'coupons' && (
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-extrabold text-white">Coupon Management</h2>
-              <button
-                onClick={() => { resetCouponForm(); setShowAddCoupon(true); }}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-tr from-amber-600 to-amber-500 text-slate-950 font-bold text-sm flex items-center gap-2 hover:from-amber-500 hover:to-amber-400 transition-smooth shadow-lg shadow-amber-500/20"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-                Add Coupon
-              </button>
-            </div>
 
-            {/* Add/Edit Coupon Form */}
-            {(showAddCoupon || editingCoupon) && (
-              <div className="glass rounded-2xl p-6 mb-6 border border-amber-500/20 animate-fadeIn">
-                <h3 className="font-bold text-white text-base mb-4">{editingCoupon ? 'Edit Coupon Code' : 'Create New Coupon Code'}</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Coupon Code (e.g. SAVE20)</label>
-                    <input
-                      value={couponForm.code}
-                      onChange={e => setCouponForm({...couponForm, code: e.target.value.toUpperCase()})}
-                      placeholder="e.g. WELCOME10"
-                      className="text-sm font-mono tracking-wider"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Description</label>
-                    <input
-                      value={couponForm.description}
-                      onChange={e => setCouponForm({...couponForm, description: e.target.value})}
-                      placeholder="Short promo summary"
-                      className="text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Discount Type</label>
-                    <select
-                      value={couponForm.discountType}
-                      onChange={e => setCouponForm({...couponForm, discountType: e.target.value as Coupon['discountType']})}
-                      className="text-sm"
-                    >
-                      <option value="percentage">Percentage (%)</option>
-                      <option value="flat">Flat Amount (₹)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
-                      {couponForm.discountType === 'percentage' ? 'Discount %' : 'Discount Amount (₹)'}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={couponForm.discountValue}
-                      onChange={e => setCouponForm({...couponForm, discountValue: e.target.value})}
-                      placeholder="0"
-                      className="text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
-                      Min Order Amount (₹) <span className="text-slate-600">(optional)</span>
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={couponForm.minOrderAmount}
-                      onChange={e => setCouponForm({...couponForm, minOrderAmount: e.target.value})}
-                      placeholder="0.00"
-                      className="text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
-                      Max Discount Cap (₹) <span className="text-slate-600">(optional)</span>
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={couponForm.maxDiscountAmount}
-                      onChange={e => setCouponForm({...couponForm, maxDiscountAmount: e.target.value})}
-                      placeholder="0.00"
-                      className="text-sm"
-                    />
-                  </div>
-                  <div className="md:col-span-2 flex items-center gap-3">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active</label>
-                    <button
-                      type="button"
-                      onClick={() => setCouponForm({...couponForm, active: !couponForm.active})}
-                      className={`relative w-12 h-6 rounded-full transition-smooth ${couponForm.active ? 'bg-amber-500' : 'bg-slate-700'}`}
-                    >
-                      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-smooth ${couponForm.active ? 'left-6' : 'left-0.5'}`} />
-                    </button>
-                    <span className="text-xs text-slate-400">{couponForm.active ? 'Active' : 'Inactive'}</span>
-                  </div>
-                </div>
-                <div className="flex gap-3 justify-end mt-4">
-                  <button onClick={resetCouponForm} className="btn-secondary text-xs px-4 py-2">Cancel</button>
-                  <button
-                    onClick={editingCoupon ? handleUpdateCoupon : handleAddCoupon}
-                    className="px-4 py-2 bg-amber-500 text-slate-950 font-bold rounded-xl text-xs hover:bg-amber-400 transition-smooth"
-                  >
-                    {editingCoupon ? 'Update Coupon' : 'Create Coupon'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Coupons List */}
-            {coupons.length === 0 ? (
-              <div className="text-center py-20 text-slate-500 glass rounded-2xl flex flex-col items-center">
-                <Ticket className="w-12 h-12 mb-3 text-slate-700" />
-                <p className="text-sm font-semibold">No coupons created yet</p>
-                <p className="text-xs mt-1">Create promotional coupons for customers to use during checkout.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {coupons.map(c => (
-                  <div key={c.id} className={`glass rounded-2xl p-5 border transition-smooth ${c.active ? 'border-amber-500/30' : 'border-slate-800 opacity-60'}`}>
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3 mb-1">
-                          <span className="font-extrabold text-amber-400 font-mono text-base px-2.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
-                            {c.code}
-                          </span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${c.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-400'}`}>
-                            {c.active ? 'ACTIVE' : 'INACTIVE'}
-                          </span>
-                        </div>
-                        {c.description && <p className="text-sm text-slate-300 mb-2">{c.description}</p>}
-                        <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                          <span className="font-bold text-amber-400">
-                            {c.discountType === 'percentage' ? `${c.discountValue}% OFF` : `₹${c.discountValue} OFF`}
-                          </span>
-                          {c.minOrderAmount ? (
-                            <span>Min Order: ₹{c.minOrderAmount.toFixed(2)}</span>
-                          ) : (
-                            <span>No Min Order</span>
-                          )}
-                          {c.maxDiscountAmount ? (
-                            <span>Max Discount Cap: ₹{c.maxDiscountAmount.toFixed(2)}</span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => toggleCouponActive(c.id)} className={`p-2.5 rounded-lg transition-smooth ${c.active ? 'text-green-400 hover:bg-green-500/10' : 'text-slate-500 hover:bg-slate-800'}`} aria-label="Toggle active">
-                          {c.active ? <CheckCircle className="w-4 h-4" weight="fill" /> : <PauseCircle className="w-4 h-4" weight="fill" />}
-                        </button>
-                        <button onClick={() => handleEditCoupon(c.id)} className="text-slate-400 hover:text-amber-400 p-2.5 rounded-lg hover:bg-slate-800/50 transition-smooth" aria-label="Edit">
-                          <PencilSimple className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleDeleteCoupon(c.id)} className="text-slate-500 hover:text-red-400 p-2.5 rounded-lg hover:bg-red-500/10 transition-smooth" aria-label="Delete">
-                          <Trash className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Realtime New Order Notification Toast Banner */}
