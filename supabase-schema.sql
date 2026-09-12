@@ -313,29 +313,32 @@ CREATE POLICY "Anyone can create enquiry" ON public.enquiries FOR INSERT WITH CH
 DROP POLICY IF EXISTS "Anyone can create order items" ON public.order_items;
 CREATE POLICY "Anyone can create order items" ON public.order_items FOR INSERT WITH CHECK (true);
 
--- 10.3 Full Management Access (Server Actions / Authenticated / Service Role)
+-- 10.3 Authenticated & Service Role Management Access
+-- Restricts administrative mutations exclusively to server actions and authorized roles,
+-- preventing unauthenticated public API abuse.
 DROP POLICY IF EXISTS "Full access for branches" ON public.branches;
-CREATE POLICY "Full access for branches" ON public.branches FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Full access for branches" ON public.branches FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Full access for categories" ON public.categories;
-CREATE POLICY "Full access for categories" ON public.categories FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Full access for categories" ON public.categories FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Full access for menu items" ON public.menu_items;
-CREATE POLICY "Full access for menu items" ON public.menu_items FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Full access for menu items" ON public.menu_items FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Full access for product branches" ON public.product_branches FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Full access for product branches" ON public.product_branches FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Full access for enquiries" ON public.enquiries;
-CREATE POLICY "Full access for enquiries" ON public.enquiries FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Full access for enquiries" ON public.enquiries FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Full access for order items" ON public.order_items;
-CREATE POLICY "Full access for order items" ON public.order_items FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Full access for order items" ON public.order_items FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Full access for offers" ON public.offers;
-CREATE POLICY "Full access for offers" ON public.offers FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Full access for offers" ON public.offers FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Full access for admin profiles" ON public.admin_profiles;
-CREATE POLICY "Full access for admin profiles" ON public.admin_profiles FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Full access for admin profiles" ON public.admin_profiles FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
+
 
 
 -- ==============================================================================

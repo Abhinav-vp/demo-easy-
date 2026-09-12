@@ -13,21 +13,31 @@ export async function submitOrderAction(order: Enquiry): Promise<{ success: bool
 
     const supabase = getSupabaseServerClient();
 
+    // Input sanitization & bounds checking
+    const customerName = String(order.customerName || '').trim().slice(0, 100);
+    const customerPhone = String(order.customerPhone || '').trim().slice(0, 30);
+    if (!customerName || !customerPhone) {
+      return { success: false, error: 'Customer name and phone number are required' };
+    }
+
+    const safeTotalPrice = Math.max(0, parseFloat(Number(order.totalPrice || 0).toFixed(2)));
+    const safeBranch = (order.branch === 'Kariyad' || order.branch === 'Pallikkuni') ? order.branch : 'Pallikkuni';
+
     const payload = {
       id: order.id || `enq-${Date.now()}`,
       order_id: order.orderId,
-      status: order.status || 'pending',
-      branch: order.branch || null,
-      customer_name: order.customerName,
-      customer_phone: order.customerPhone,
-      delivery_address: order.deliveryAddress || null,
-      delivery_landmark: order.deliveryLandmark || null,
-      delivery_notes: order.deliveryNotes || null,
-      items: order.items,
+      status: 'pending' as const, // Strict enforcement: New customer orders are always pending
+      branch: safeBranch,
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      delivery_address: order.deliveryAddress ? String(order.deliveryAddress).trim().slice(0, 300) : null,
+      delivery_landmark: order.deliveryLandmark ? String(order.deliveryLandmark).trim().slice(0, 150) : null,
+      delivery_notes: order.deliveryNotes ? String(order.deliveryNotes).trim().slice(0, 300) : null,
+      items: String(order.items || '').slice(0, 2000),
       item_details: order.itemDetails || null,
-      subtotal_price: order.subtotalPrice || null,
-      total_quantity: order.totalQuantity || 1,
-      total_price: order.totalPrice,
+      subtotal_price: order.subtotalPrice ? Math.max(0, parseFloat(Number(order.subtotalPrice).toFixed(2))) : null,
+      total_quantity: Math.max(1, Math.floor(Number(order.totalQuantity) || 1)),
+      total_price: safeTotalPrice,
     };
 
     const { error } = await supabase.from('enquiries').insert([payload]);
