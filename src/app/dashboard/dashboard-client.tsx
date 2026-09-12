@@ -54,6 +54,8 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [showAddOffer, setShowAddOffer] = useState(false);
   const [editingOffer, setEditingOffer] = useState<string | null>(null);
+  const [offerProductSearch, setOfferProductSearch] = useState('');
+  const offerFormRef = useRef<HTMLDivElement>(null);
   const [offerForm, setOfferForm] = useState({
     title: '', description: '', discountType: 'percentage' as Offer['discountType'],
     discountValue: '', applicableProducts: [] as string[], active: true
@@ -622,6 +624,37 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     }));
   };
 
+  const handleSelectProductForOffer = (product: MenuItem, existingOffer?: Offer) => {
+    if (existingOffer) {
+      setOfferForm({
+        title: existingOffer.title,
+        description: existingOffer.description,
+        discountType: existingOffer.discountType,
+        discountValue: existingOffer.discountValue.toString(),
+        applicableProducts: existingOffer.applicableProducts.includes(product.id)
+          ? existingOffer.applicableProducts
+          : [...existingOffer.applicableProducts, product.id],
+        active: existingOffer.active
+      });
+      setEditingOffer(existingOffer.id);
+      setShowAddOffer(false);
+    } else {
+      setOfferForm({
+        title: `${product.name} Special Offer`,
+        description: `Special discount on ${product.name}`,
+        discountType: 'percentage',
+        discountValue: '10',
+        applicableProducts: [product.id],
+        active: true
+      });
+      setEditingOffer(null);
+      setShowAddOffer(true);
+    }
+    setTimeout(() => {
+      offerFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 60);
+  };
+
   const handleLogout = async () => {
     await fetch('/api/admin-logout', { method: 'POST' });
     router.push('/login');
@@ -1064,9 +1097,33 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
               </button>
             </div>
 
+            {/* Product Search Bar */}
+            <div className="relative mb-6">
+              <div className="relative flex items-center">
+                <MagnifyingGlass className="absolute left-4 w-4 h-4 text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={offerProductSearch}
+                  onChange={(e) => setOfferProductSearch(e.target.value)}
+                  placeholder="Search products to make an offer..."
+                  className="w-full pl-11 pr-10 py-3 rounded-xl bg-slate-900/80 border border-slate-800 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-smooth"
+                />
+                {offerProductSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setOfferProductSearch('')}
+                    className="absolute right-3 p-1.5 text-slate-400 hover:text-white rounded-lg transition-smooth"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Add/Edit Offer Form */}
             {(showAddOffer || editingOffer) && (
-              <div className="glass rounded-2xl p-6 mb-6 border border-amber-500/20 animate-fadeIn">
+              <div ref={offerFormRef} className="glass rounded-2xl p-6 mb-6 border border-amber-500/20 animate-fadeIn">
                 <h3 className="font-bold text-white text-base mb-4">{editingOffer ? 'Edit Offer' : 'Create New Offer'}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -1135,53 +1192,178 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
               </div>
             )}
 
-            {/* Offers List */}
-            {offers.length === 0 ? (
-              <div className="text-center py-20 text-slate-500 glass rounded-2xl flex flex-col items-center">
-                <Tag className="w-12 h-12 mb-3 text-slate-700" />
-                <p className="text-sm font-semibold">No offers yet</p>
-                <p className="text-xs mt-1">Create offers to display on the website and apply discounts to products.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {offers.map(offer => (
-                  <div key={offer.id} className={`glass rounded-2xl p-5 border transition-smooth ${offer.active ? 'border-amber-500/30' : 'border-slate-800 opacity-60'}`}>
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3 mb-1">
-                          <h4 className="font-extrabold text-white">{offer.title}</h4>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${offer.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-400'}`}>
-                            {offer.active ? 'ACTIVE' : 'INACTIVE'}
-                          </span>
-                        </div>
-                        <p className="text-sm text-slate-400 mb-2">{offer.description}</p>
-                        <div className="flex items-center gap-4 text-xs text-slate-500">
-                          <span className="font-bold text-amber-400/80">
-                            {offer.discountType === 'percentage' ? `${offer.discountValue}% OFF` : `₹${offer.discountValue} OFF`}
-                          </span>
-                          <span>
-                            {offer.applicableProducts.length === 0
-                              ? 'All Products'
-                              : `${offer.applicableProducts.length} product(s)`
-                            }
-                          </span>
-                        </div>
+            {/* Matching Products (Search Active) or Existing Offers List */}
+            {offerProductSearch.trim() ? (
+              <div>
+                {(() => {
+                  const query = offerProductSearch.trim().toLowerCase();
+                  const matchingProducts = menuItems.filter(item => {
+                    const nameMatch = item.name?.toLowerCase().includes(query);
+                    const catMatch = item.category ? item.category.toLowerCase().includes(query) : false;
+                    const idMatch = item.id?.toLowerCase().includes(query);
+                    const descMatch = item.description ? item.description.toLowerCase().includes(query) : false;
+                    const brandMatch = (item as any).brand ? String((item as any).brand).toLowerCase().includes(query) : false;
+                    return nameMatch || catMatch || idMatch || descMatch || brandMatch;
+                  });
+
+                  if (matchingProducts.length === 0) {
+                    return (
+                      <div className="text-center py-16 text-slate-500 glass rounded-2xl flex flex-col items-center">
+                        <MagnifyingGlass className="w-10 h-10 mb-3 text-slate-700" />
+                        <p className="text-sm font-semibold">No products found.</p>
+                        <button
+                          type="button"
+                          onClick={() => setOfferProductSearch('')}
+                          className="text-xs text-amber-400 hover:underline mt-2"
+                        >
+                          Clear search
+                        </button>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => toggleOfferActive(offer.id)} className={`p-2.5 rounded-lg transition-smooth ${offer.active ? 'text-green-400 hover:bg-green-500/10' : 'text-slate-500 hover:bg-slate-800'}`} aria-label="Toggle active">
-                          {offer.active ? <CheckCircle className="w-4 h-4" weight="fill" /> : <PauseCircle className="w-4 h-4" weight="fill" />}
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          Matching Products ({matchingProducts.length})
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => setOfferProductSearch('')}
+                          className="text-xs text-slate-400 hover:text-amber-400 transition-smooth"
+                        >
+                          Show All Offers
                         </button>
-                        <button onClick={() => handleEditOffer(offer.id)} className="text-slate-400 hover:text-amber-400 p-2.5 rounded-lg hover:bg-slate-800/50 transition-smooth" aria-label="Edit">
-                          <PencilSimple className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleDeleteOffer(offer.id)} className="text-slate-500 hover:text-red-400 p-2.5 rounded-lg hover:bg-red-500/10 transition-smooth" aria-label="Delete">
-                          <Trash className="w-4 h-4" />
-                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {matchingProducts.map(item => {
+                          const existingOffer = offers.find(o => o.applicableProducts.includes(item.id));
+                          const isSelectedInForm = (showAddOffer || editingOffer) && offerForm.applicableProducts.includes(item.id);
+
+                          return (
+                            <div
+                              key={item.id}
+                              className={`glass rounded-2xl overflow-hidden border transition-smooth group flex flex-col ${
+                                isSelectedInForm
+                                  ? 'border-amber-500/60 ring-1 ring-amber-500/30'
+                                  : 'border-slate-800 hover:border-slate-700/60'
+                              }`}
+                            >
+                              {/* Thumbnail Image display */}
+                              <div className="h-36 w-full relative bg-slate-900 overflow-hidden flex items-center justify-center border-b border-slate-800">
+                                {item.image ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-smooth" />
+                                ) : (
+                                  <div className="text-center p-4 flex flex-col items-center">
+                                    <ForkKnife className="w-8 h-8 text-slate-700" />
+                                    <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">No Image</p>
+                                  </div>
+                                )}
+                                <span className="absolute top-2 left-2 px-2.5 py-1 rounded-md bg-slate-950/80 backdrop-blur-md text-[9px] uppercase font-bold text-amber-400 border border-slate-800">
+                                  {item.category}
+                                </span>
+                                {existingOffer && (
+                                  <span className="absolute top-2 right-2 px-2.5 py-1 rounded-md bg-emerald-950/90 backdrop-blur-md text-[9px] uppercase font-extrabold text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+                                    <Tag className="w-3 h-3" weight="fill" />
+                                    {existingOffer.discountType === 'percentage' ? `${existingOffer.discountValue}% OFF` : `₹${existingOffer.discountValue} OFF`}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="p-5 flex-1 flex flex-col justify-between">
+                                <div>
+                                  <div className="flex items-start justify-between mb-1.5">
+                                    <h4 className="font-bold text-white text-sm truncate flex-1">{item.name}</h4>
+                                    <span className="text-amber-400 font-extrabold text-base ml-2">₹{item.price.toFixed(2)}</span>
+                                  </div>
+                                  <p className="text-xs text-slate-400 line-clamp-2 mb-3">{item.description}</p>
+                                  {existingOffer && (
+                                    <p className="text-[11px] text-emerald-400/90 mb-3 bg-emerald-500/10 rounded-lg px-2.5 py-1 border border-emerald-500/20 truncate">
+                                      Active Offer: <span className="font-bold text-white">{existingOffer.title}</span>
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-3 border-t border-slate-800/40">
+                                  {existingOffer ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectProductForOffer(item, existingOffer)}
+                                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold px-3 py-2.5 rounded-xl bg-amber-500/15 text-amber-400 hover:bg-amber-500 hover:text-slate-950 border border-amber-500/30 transition-smooth"
+                                    >
+                                      <PencilSimple className="w-4 h-4" /> Edit Offer
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectProductForOffer(item)}
+                                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold px-3 py-2.5 rounded-xl bg-gradient-to-tr from-amber-600 to-amber-500 text-slate-950 hover:from-amber-500 hover:to-amber-400 transition-smooth shadow-sm shadow-amber-500/20"
+                                    >
+                                      <Tag className="w-4 h-4" weight="fill" /> Make Offer
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })()}
               </div>
+            ) : (
+              /* Offers List */
+              offers.length === 0 ? (
+                <div className="text-center py-20 text-slate-500 glass rounded-2xl flex flex-col items-center">
+                  <Tag className="w-12 h-12 mb-3 text-slate-700" />
+                  <p className="text-sm font-semibold">No offers yet</p>
+                  <p className="text-xs mt-1">Create offers to display on the website and apply discounts to products.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {offers.map(offer => (
+                    <div key={offer.id} className={`glass rounded-2xl p-5 border transition-smooth ${offer.active ? 'border-amber-500/30' : 'border-slate-800 opacity-60'}`}>
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 mb-1">
+                            <h4 className="font-extrabold text-white">{offer.title}</h4>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${offer.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-400'}`}>
+                              {offer.active ? 'ACTIVE' : 'INACTIVE'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-400 mb-2">{offer.description}</p>
+                          <div className="flex items-center gap-4 text-xs text-slate-500">
+                            <span className="font-bold text-amber-400/80">
+                              {offer.discountType === 'percentage' ? `${offer.discountValue}% OFF` : `₹${offer.discountValue} OFF`}
+                            </span>
+                            <span>
+                              {offer.applicableProducts.length === 0
+                                ? 'All Products'
+                                : `${offer.applicableProducts.length} product(s)`
+                              }
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button onClick={() => toggleOfferActive(offer.id)} className={`p-2.5 rounded-lg transition-smooth ${offer.active ? 'text-green-400 hover:bg-green-500/10' : 'text-slate-500 hover:bg-slate-800'}`} aria-label="Toggle active">
+                            {offer.active ? <CheckCircle className="w-4 h-4" weight="fill" /> : <PauseCircle className="w-4 h-4" weight="fill" />}
+                          </button>
+                          <button onClick={() => handleEditOffer(offer.id)} className="text-slate-400 hover:text-amber-400 p-2.5 rounded-lg hover:bg-slate-800/50 transition-smooth" aria-label="Edit">
+                            <PencilSimple className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDeleteOffer(offer.id)} className="text-slate-500 hover:text-red-400 p-2.5 rounded-lg hover:bg-red-500/10 transition-smooth" aria-label="Delete">
+                            <Trash className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
             )}
           </div>
         )}
