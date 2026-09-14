@@ -46,6 +46,9 @@ export async function fetchMenuItemsAction(): Promise<{ success: boolean; data: 
       description: row.description || '',
       image: row.image || row.image_url || undefined,
       branch: row.branch || undefined,
+      available: row.is_available ?? true,
+      is_available: row.is_available ?? true,
+      stock: row.stock ? Number(row.stock) : undefined,
     }));
 
     return { success: true, data: items };
@@ -73,7 +76,10 @@ export async function createMenuItemAction(item: MenuItem): Promise<{ success: b
       original_price: item.originalPrice || null,
       description: item.description || '',
       image: item.image || null,
+      image_url: item.image || null,
       branch: item.branch || null,
+      is_available: item.available ?? item.is_available ?? true,
+      stock: item.stock || 0,
     }]);
 
     if (error) {
@@ -105,8 +111,14 @@ export async function updateMenuItemAction(id: string, item: Partial<MenuItem>):
     if (item.price !== undefined) updatePayload.price = item.price;
     if (item.originalPrice !== undefined) updatePayload.original_price = item.originalPrice;
     if (item.description !== undefined) updatePayload.description = item.description;
-    if (item.image !== undefined) updatePayload.image = item.image || null;
+    if (item.image !== undefined) {
+      updatePayload.image = item.image || null;
+      updatePayload.image_url = item.image || null;
+    }
     if (item.branch !== undefined) updatePayload.branch = item.branch || null;
+    if (item.available !== undefined) updatePayload.is_available = item.available;
+    if (item.is_available !== undefined) updatePayload.is_available = item.is_available;
+    if (item.stock !== undefined) updatePayload.stock = item.stock;
 
     const { error } = await supabase
       .from('menu_items')
@@ -209,10 +221,19 @@ export async function fetchEnquiriesAction(): Promise<{ success: boolean; data: 
     }
 
     const supabase = getSupabaseServerClient();
-    const { data, error } = await supabase
-      .from('enquiries')
+    let { data, error } = await supabase
+      .from('enquiry')
       .select('*')
       .order('created_at', { ascending: false });
+
+    if (error && (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('not found'))) {
+      const fallback = await supabase
+        .from('enquiries')
+        .select('*')
+        .order('created_at', { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error) {
       console.warn('fetchEnquiriesAction notice:', error.message);
@@ -254,10 +275,18 @@ export async function updateOrderStatusAction(id: string, newStatus: OrderStatus
     }
 
     const supabase = getSupabaseServerClient();
-    const { error } = await supabase
-      .from('enquiries')
+    let { error } = await supabase
+      .from('enquiry')
       .update({ status: newStatus })
       .eq('id', id);
+
+    if (error && (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('not found'))) {
+      const fallback = await supabase
+        .from('enquiries')
+        .update({ status: newStatus })
+        .eq('id', id);
+      error = fallback.error;
+    }
 
     if (error) {
       return { success: false, error: error.message };
@@ -281,7 +310,12 @@ export async function deleteEnquiryAction(id: string): Promise<{ success: boolea
     }
 
     const supabase = getSupabaseServerClient();
-    const { error } = await supabase.from('enquiries').delete().eq('id', id);
+    let { error } = await supabase.from('enquiry').delete().eq('id', id);
+
+    if (error && (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('not found'))) {
+      const fallback = await supabase.from('enquiries').delete().eq('id', id);
+      error = fallback.error;
+    }
 
     if (error) {
       return { success: false, error: error.message };
@@ -305,7 +339,12 @@ export async function clearAllEnquiriesAction(): Promise<{ success: boolean; err
     }
 
     const supabase = getSupabaseServerClient();
-    const { error } = await supabase.from('enquiries').delete().neq('id', '');
+    let { error } = await supabase.from('enquiry').delete().neq('id', '');
+
+    if (error && (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('not found'))) {
+      const fallback = await supabase.from('enquiries').delete().neq('id', '');
+      error = fallback.error;
+    }
 
     if (error) {
       return { success: false, error: error.message };

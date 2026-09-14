@@ -143,8 +143,34 @@ CREATE TABLE IF NOT EXISTS public.product_branches (
 );
 
 
--- 5. ORDERS / ENQUIRIES TABLE
+-- 5. ORDERS / ENQUIRY TABLE
 -- Stores every customer order with branch selection and delivery details
+-- Supports both `public.enquiry` (singular) and `public.enquiries` (plural) for 100% compatibility
+CREATE TABLE IF NOT EXISTS public.enquiry (
+    id TEXT PRIMARY KEY,
+    order_id TEXT UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled')),
+    branch TEXT NOT NULL DEFAULT 'Pallikkuni',
+    branch_id TEXT REFERENCES public.branches(id) ON DELETE SET NULL,
+    customer_name TEXT NOT NULL,
+    customer_phone TEXT NOT NULL,
+    customer_email TEXT,
+    customer_address TEXT,
+    delivery_address TEXT,
+    delivery_landmark TEXT,
+    delivery_notes TEXT,
+    payment_method TEXT DEFAULT 'COD',
+    payment_status TEXT DEFAULT 'pending',
+    items TEXT NOT NULL,
+    item_details JSONB,
+    subtotal_price NUMERIC(10, 2),
+    total_quantity INTEGER DEFAULT 1,
+    total_price NUMERIC(10, 2) NOT NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT TIMEZONE('utc'::text, NOW()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT TIMEZONE('utc'::text, NOW())
+);
+
 CREATE TABLE IF NOT EXISTS public.enquiries (
     id TEXT PRIMARY KEY,
     order_id TEXT UNIQUE,
@@ -171,6 +197,15 @@ CREATE TABLE IF NOT EXISTS public.enquiries (
 );
 
 -- Safe migrations for existing orders:
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS branch TEXT NOT NULL DEFAULT 'Pallikkuni';
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS branch_id TEXT REFERENCES public.branches(id) ON DELETE SET NULL;
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS customer_email TEXT;
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS customer_address TEXT;
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'COD';
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'pending';
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.enquiry ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW());
+
 ALTER TABLE public.enquiries ADD COLUMN IF NOT EXISTS branch TEXT NOT NULL DEFAULT 'Pallikkuni';
 ALTER TABLE public.enquiries ADD COLUMN IF NOT EXISTS branch_id TEXT REFERENCES public.branches(id) ON DELETE SET NULL;
 ALTER TABLE public.enquiries ADD COLUMN IF NOT EXISTS customer_email TEXT;
@@ -180,7 +215,7 @@ ALTER TABLE public.enquiries ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAUL
 ALTER TABLE public.enquiries ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE public.enquiries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW());
 
--- Compatibility View: allows querying `orders` or `enquiries` interchangeably
+-- Compatibility View: allows querying `orders` interchangeably
 CREATE OR REPLACE VIEW public.orders AS
 SELECT
     id,
@@ -205,7 +240,7 @@ SELECT
     notes,
     created_at,
     updated_at
-FROM public.enquiries;
+FROM public.enquiry;
 
 
 -- 6. ORDER_ITEMS TABLE
@@ -286,6 +321,7 @@ ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.menu_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_branches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.enquiry ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.enquiries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.offers ENABLE ROW LEVEL SECURITY;
@@ -301,14 +337,18 @@ CREATE POLICY "Public can view categories" ON public.categories FOR SELECT USING
 DROP POLICY IF EXISTS "Public can view menu items" ON public.menu_items;
 CREATE POLICY "Public can view menu items" ON public.menu_items FOR SELECT USING (true);
 
-DROP POLICY IF EXISTS "Public can view product branches" ON public.product_branches FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Public can view product branches" ON public.product_branches;
+CREATE POLICY "Public can view product branches" ON public.product_branches FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Public can view offers" ON public.offers;
 CREATE POLICY "Public can view offers" ON public.offers FOR SELECT USING (true);
 
 -- 10.2 Customer Order Placement (Public Insert)
-DROP POLICY IF EXISTS "Anyone can create enquiry" ON public.enquiries;
-CREATE POLICY "Anyone can create enquiry" ON public.enquiries FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Anyone can create enquiry" ON public.enquiry;
+CREATE POLICY "Anyone can create enquiry" ON public.enquiry FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Anyone can create enquiries" ON public.enquiries;
+CREATE POLICY "Anyone can create enquiries" ON public.enquiries FOR INSERT WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Anyone can create order items" ON public.order_items;
 CREATE POLICY "Anyone can create order items" ON public.order_items FOR INSERT WITH CHECK (true);
@@ -325,7 +365,11 @@ CREATE POLICY "Full access for categories" ON public.categories FOR ALL TO servi
 DROP POLICY IF EXISTS "Full access for menu items" ON public.menu_items;
 CREATE POLICY "Full access for menu items" ON public.menu_items FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Full access for product branches" ON public.product_branches FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Full access for product branches" ON public.product_branches;
+CREATE POLICY "Full access for product branches" ON public.product_branches FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Full access for enquiry" ON public.enquiry;
+CREATE POLICY "Full access for enquiry" ON public.enquiry FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Full access for enquiries" ON public.enquiries;
 CREATE POLICY "Full access for enquiries" ON public.enquiries FOR ALL TO service_role, authenticated USING (true) WITH CHECK (true);
@@ -348,9 +392,18 @@ CREATE POLICY "Full access for admin profiles" ON public.admin_profiles FOR ALL 
 -- instant popups and sound chimes without page reload
 DO $$
 BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.enquiry;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+    WHEN undefined_table THEN NULL;
+END $$;
+
+DO $$
+BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.enquiries;
 EXCEPTION
     WHEN duplicate_object THEN NULL;
+    WHEN undefined_table THEN NULL;
 END $$;
 
 

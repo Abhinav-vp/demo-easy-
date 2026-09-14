@@ -40,7 +40,11 @@ export async function submitOrderAction(order: Enquiry): Promise<{ success: bool
       total_price: safeTotalPrice,
     };
 
-    const { error } = await supabase.from('enquiries').insert([payload]);
+    let { error } = await supabase.from('enquiry').insert([payload]);
+    if (error && (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('not found'))) {
+      const fallbackRes = await supabase.from('enquiries').insert([payload]);
+      error = fallbackRes.error;
+    }
 
     if (error) {
       console.warn('submitOrderAction Supabase notice (saved locally):', error.message);

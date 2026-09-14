@@ -14,6 +14,9 @@ export interface MenuItem {
   description: string;
   image?: string;
   branch?: string;
+  available?: boolean;
+  is_available?: boolean;
+  stock?: number;
 }
 
 export interface Review {

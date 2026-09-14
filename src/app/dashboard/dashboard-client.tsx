@@ -70,6 +70,8 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
   const [menuItems, setMenuItems] = useState<AdminMenuItem[]>([]);
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+  const [productCategoryFilter, setProductCategoryFilter] = useState<string>('all');
   const [formData, setFormData] = useState({
     name: '', price: '', category: 'fruits-vegetables' as MenuItem['category'], description: '', image: ''
   });
@@ -290,29 +292,32 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
 
         if (!isMounted) return;
 
-        // Local storage fallbacks for localhost operation
-        const localMenu = getMenuItems();
-        if (menuRes.success && menuRes.data && menuRes.data.length > 0) {
+        // Supabase is the primary single source of truth when connection succeeds
+        if (menuRes.success && menuRes.data) {
           setMenuItems(menuRes.data);
         } else {
-          setMenuItems(localMenu);
+          setMenuItems(getMenuItems());
         }
 
-        const localEnquiries = getStoredEnquiries();
-        const effectiveEnquiries = enqRes.success && enqRes.data && enqRes.data.length > 0
-          ? enqRes.data
-          : localEnquiries;
-        setEnquiries(effectiveEnquiries);
-        effectiveEnquiries.forEach((e) => {
-          if (e.id) processedOrderIds.current.add(e.id);
-          if (e.orderId) processedOrderIds.current.add(e.orderId);
-        });
+        if (enqRes.success && enqRes.data) {
+          setEnquiries(enqRes.data);
+          enqRes.data.forEach((e) => {
+            if (e.id) processedOrderIds.current.add(e.id);
+            if (e.orderId) processedOrderIds.current.add(e.orderId);
+          });
+        } else {
+          const localEnquiries = getStoredEnquiries();
+          setEnquiries(localEnquiries);
+          localEnquiries.forEach((e) => {
+            if (e.id) processedOrderIds.current.add(e.id);
+            if (e.orderId) processedOrderIds.current.add(e.orderId);
+          });
+        }
 
-        const localOffers = getActiveOffers();
-        if (offersRes.success && offersRes.data && offersRes.data.length > 0) {
+        if (offersRes.success && offersRes.data) {
           setOffers(offersRes.data);
         } else {
-          setOffers(localOffers);
+          setOffers(getActiveOffers());
         }
       } catch (err: any) {
         if (isMounted) {
@@ -374,6 +379,16 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
           console.error("[ALARM] Audio playback failed:", err);
         }
       }
+
+      // Refresh enquiries from database in background to sync any joins/computed fields
+      try {
+        const freshRes = await fetchEnquiriesAction();
+        if (freshRes.success && freshRes.data) {
+          setEnquiries(freshRes.data);
+        }
+      } catch (err) {
+        console.warn("[REALTIME] Background sync fetch error:", err);
+      }
     };
 
     // Listen for local order event from customer tab
@@ -386,7 +401,16 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     window.addEventListener('orderflow_new_enquiry', handleLocalOrderEvent);
 
     const channel = supabase
-      .channel('admin-new-enquiries')
+      .channel('admin-enquiry-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'enquiry',
+        },
+        handleNewEnquiry
+      )
       .on(
         'postgres_changes',
         {
@@ -405,12 +429,16 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
         },
         handleNewEnquiry
       )
-      .subscribe((status, err) => {
-        console.log("[REALTIME] enquiries subscription:", status);
+      .subscribe((status, error) => {
+        console.log('Enquiry Realtime:', status);
+        if (error) {
+          console.error('Enquiry Realtime error:', error);
+        }
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('connected');
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          setRealtimeStatus('connected'); // In local mode, treat as connected
+          console.warn(`[REALTIME] Channel status: ${status}`);
+          setRealtimeStatus(status === 'CLOSED' ? 'disconnected' : 'error');
         }
       });
 
@@ -501,6 +529,20 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
     setActionPending(false);
     if (!res.success) {
       setActionError(res.error || 'Deleted locally.');
+    }
+  };
+
+  const handleToggleProductAvailability = async (item: AdminMenuItem) => {
+    const isCurrentlyAvailable = item.is_available !== false && item.available !== false;
+    const nextState = !isCurrentlyAvailable;
+    const updated = menuItems.map(m => m.id === item.id ? { ...m, is_available: nextState, available: nextState } : m);
+    setMenuItems(updated);
+    saveMenuItems(updated);
+    setActionPending(true);
+    const res = await updateMenuItemAction(item.id, { is_available: nextState, available: nextState });
+    setActionPending(false);
+    if (!res.success) {
+      setActionError(res.error || 'Availability updated locally.');
     }
   };
 
@@ -1546,47 +1588,150 @@ export default function DashboardClient({ userEmail }: { userEmail: string }) {
               </div>
             )}
 
+            {/* Search and Category Filter Bar */}
+            <div className="glass rounded-2xl p-4 mb-6 border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="relative w-full md:w-80">
+                <MagnifyingGlass className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  placeholder="Search products by name, ID..."
+                  className="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl pl-10 pr-8 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 transition-smooth"
+                />
+                {productSearch && (
+                  <button
+                    onClick={() => setProductSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
+                {[
+                  { id: 'all', label: `All (${menuItems.length})` },
+                  { id: 'fruits-vegetables', label: '🥦 Produce' },
+                  { id: 'dairy-bakery', label: '🥛 Dairy' },
+                  { id: 'groceries-staples', label: '🌾 Staples' },
+                  { id: 'snacks-beverages', label: '🍪 Snacks' },
+                  { id: 'household-essentials', label: '🧼 Household' },
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setProductCategoryFilter(cat.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-smooth border ${
+                      productCategoryFilter === cat.id
+                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
+                        : 'glass border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Menu Items Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {menuItems.map(item => (
-                <div key={item.id} className="glass rounded-2xl overflow-hidden border border-slate-800 hover:border-slate-700/60 transition-smooth group flex flex-col">
-                  {/* Thumbnail Image display */}
-                  <div className="h-36 w-full relative bg-slate-900 overflow-hidden flex items-center justify-center border-b border-slate-800">
-                    {item.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-smooth" />
-                    ) : (
-                      <div className="text-center p-4 flex flex-col items-center">
-                        <ForkKnife className="w-8 h-8 text-slate-700" />
-                        <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">No Image</p>
+              {menuItems
+                .filter((item) => {
+                  const term = productSearch.toLowerCase().trim();
+                  const matchesSearch = !term ||
+                    item.name.toLowerCase().includes(term) ||
+                    (item.description && item.description.toLowerCase().includes(term)) ||
+                    (item.id && item.id.toLowerCase().includes(term));
+                  const matchesCategory = productCategoryFilter === 'all' || item.category === productCategoryFilter;
+                  return matchesSearch && matchesCategory;
+                })
+                .map((item) => {
+                  const isAvailable = item.is_available !== false && item.available !== false;
+                  return (
+                    <div key={item.id} className="glass rounded-2xl overflow-hidden border border-slate-800 hover:border-slate-700/60 transition-smooth group flex flex-col">
+                      {/* Thumbnail Image display */}
+                      <div className="h-36 w-full relative bg-slate-900 overflow-hidden flex items-center justify-center border-b border-slate-800">
+                        {item.image ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-smooth" />
+                        ) : (
+                          <div className="text-center p-4 flex flex-col items-center">
+                            <ForkKnife className="w-8 h-8 text-slate-700" />
+                            <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">No Image</p>
+                          </div>
+                        )}
+                        <span className="absolute top-2 left-2 px-2.5 py-1 rounded-md bg-slate-950/80 backdrop-blur-md text-[9px] uppercase font-bold text-amber-400 border border-slate-800">
+                          {item.category}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleToggleProductAvailability(item); }}
+                          className={`absolute top-2 right-2 px-2 py-0.5 rounded-md backdrop-blur-md text-[9px] font-extrabold transition-smooth border cursor-pointer ${
+                            isAvailable
+                              ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/40 hover:bg-emerald-900'
+                              : 'bg-rose-950/80 text-rose-400 border-rose-500/40 hover:bg-rose-900'
+                          }`}
+                          title={isAvailable ? 'Click to mark as Out of Stock' : 'Click to mark as In Stock'}
+                        >
+                          {isAvailable ? '✓ In Stock' : '✕ Out of Stock'}
+                        </button>
                       </div>
-                    )}
-                    <span className="absolute top-2 left-2 px-2.5 py-1 rounded-md bg-slate-950/80 backdrop-blur-md text-[9px] uppercase font-bold text-amber-400 border border-slate-800">
-                      {item.category}
-                    </span>
-                  </div>
 
-                  <div className="p-5 flex-1 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-start justify-between mb-1.5">
-                        <h4 className="font-bold text-white text-sm truncate flex-1">{item.name}</h4>
-                        <span className="text-amber-400 font-extrabold text-base ml-2">₹{item.price.toFixed(2)}</span>
+                      <div className="p-5 flex-1 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-start justify-between mb-1.5">
+                            <h4 className="font-bold text-white text-sm truncate flex-1">{item.name}</h4>
+                            <span className="text-amber-400 font-extrabold text-base ml-2">₹{item.price.toFixed(2)}</span>
+                          </div>
+                          <p className="text-xs text-slate-400 line-clamp-2 mb-4">{item.description}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-3 border-t border-slate-800/40">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleProductAvailability(item)}
+                            className={`px-3 py-2 rounded-lg text-[11px] font-bold transition-smooth border ${
+                              isAvailable
+                                ? 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
+                                : 'border-rose-500/30 text-rose-400 hover:bg-rose-500/10'
+                            }`}
+                            title={isAvailable ? 'Click to disable' : 'Click to enable'}
+                          >
+                            {isAvailable ? 'Enabled' : 'Disabled'}
+                          </button>
+                          <button onClick={() => handleEditItem(item.id)} className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-slate-300 hover:text-amber-400 p-2.5 rounded-lg hover:bg-slate-800/50 transition-smooth">
+                            <PencilSimple className="w-4 h-4" /> Edit
+                          </button>
+                          <button onClick={() => handleDeleteItem(item.id)} className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-slate-400 hover:text-red-400 p-2.5 rounded-lg hover:bg-red-500/10 transition-smooth">
+                            <Trash className="w-4 h-4" /> Delete
+                          </button>
+                        </div>
                       </div>
-                      <p className="text-xs text-slate-400 line-clamp-2 mb-4">{item.description}</p>
                     </div>
-
-                    <div className="flex items-center gap-2 pt-3 border-t border-slate-800/40">
-                      <button onClick={() => handleEditItem(item.id)} className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-slate-300 hover:text-amber-400 p-2.5 rounded-lg hover:bg-slate-800/50 transition-smooth">
-                        <PencilSimple className="w-4 h-4" /> Edit
-                      </button>
-                      <button onClick={() => handleDeleteItem(item.id)} className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-slate-400 hover:text-red-400 p-2.5 rounded-lg hover:bg-red-500/10 transition-smooth">
-                        <Trash className="w-4 h-4" /> Delete
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                  );
+                })}
             </div>
+
+            {menuItems.length > 0 &&
+              menuItems.filter((item) => {
+                const term = productSearch.toLowerCase().trim();
+                const matchesSearch = !term ||
+                  item.name.toLowerCase().includes(term) ||
+                  (item.description && item.description.toLowerCase().includes(term)) ||
+                  (item.id && item.id.toLowerCase().includes(term));
+                const matchesCategory = productCategoryFilter === 'all' || item.category === productCategoryFilter;
+                return matchesSearch && matchesCategory;
+              }).length === 0 && (
+                <div className="text-center py-16 text-slate-400 glass rounded-2xl border border-slate-800 mt-4">
+                  <p className="text-sm font-semibold text-white">No products matched your search or category filter</p>
+                  <button
+                    onClick={() => { setProductSearch(''); setProductCategoryFilter('all'); }}
+                    className="mt-3 px-4 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/30 transition-smooth"
+                  >
+                    Reset Filters
+                  </button>
+                </div>
+              )}
 
             {menuItems.length === 0 && (
               <div className="text-center py-20 text-slate-500">
